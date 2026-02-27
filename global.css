@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+    :root {
+        --pad-xs: 4px;
+        --pad-sm: 8px;
+        --pad-md: 16px;
+        --pad-lg: 24px;
+        --pad-xl: 32px;
+        --pad-2xl: 40px;
+    }
+
+    Text,
+    TextInput {
+        font-family: 'Cori';
+    }
+}
+
+@layer utilities {
+    .font-medium {
+        font-family: 'Cori-Medium' !important;
+        font-weight: 500 !important;
+    }
+
+    .font-semibold {
+        font-family: 'Cori-SemiBold' !important;
+        font-weight: 600 !important;
+    }
+
+    .font-bold {
+        font-family: 'Cori-Bold' !important;
+        font-weight: 700 !important;
+    }
+}

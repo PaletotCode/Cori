@@ -1,21 +1,24 @@
+import { Lora_400Regular, useFonts } from '@expo-google-fonts/lora';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
+import '../global.css';
 
 import { useColorScheme } from '@/components/useColorScheme';
 
+import { useAuthStore } from '../store/authStore';
+
 export {
   // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
+  ErrorBoundary
 } from 'expo-router';
 
 export const unstable_settings = {
   // Ensure that reloading on `/modal` keeps a back button present.
-  initialRouteName: '(tabs)',
+  initialRouteName: '(app)',
 };
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -23,9 +26,20 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
+    Cori: Lora_400Regular,
+    'Cori-Medium': require('@expo-google-fonts/lora/500Medium/Lora_500Medium.ttf'),
+    'Cori-SemiBold': require('@expo-google-fonts/lora/600SemiBold/Lora_600SemiBold.ttf'),
+    'Cori-Bold': require('@expo-google-fonts/lora/700Bold/Lora_700Bold.ttf'),
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     ...FontAwesome.font,
   });
+
+  const { checkAuth } = useAuthStore();
+
+  useEffect(() => {
+    // Check local storage for existing session when app mounts
+    checkAuth();
+  }, []);
 
   // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
@@ -47,13 +61,32 @@ export default function RootLayout() {
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
+  const { psicologo, isLoading } = useAuthStore();
+  const segments = useSegments();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    const inAuthGroup = segments[0] === '(auth)';
+
+    if (!psicologo && !inAuthGroup) {
+      // Not logged in, force to login screen
+      router.replace('/(auth)/login');
+    } else if (psicologo && inAuthGroup) {
+      // Logged in, force to app
+      router.replace('/(app)');
+    }
+  }, [psicologo, isLoading, segments]);
+
+  if (isLoading) {
+    // We could render an animated splash screen here instead
+    return null;
+  }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
+      <Stack screenOptions={{ headerShown: false }} />
     </ThemeProvider>
   );
 }
