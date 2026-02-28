@@ -8,7 +8,6 @@ Ciclo de vida (lifespan):
 Routers registrados por domínio:
     /auth       — Autenticação Google OAuth
     /pacientes  — CRUD de pacientes (multi-tenant)
-    /triagem    — Self-onboarding público + aprovação
     /sessoes    — Agenda + check-in + confirmação de paciente
     /faturas    — Motor financeiro / fecho de mês
     /anotacoes  — Prontuário clínico
@@ -29,7 +28,7 @@ import backend.models  # noqa: F401
 
 from backend.routes import (
     auth, pacientes, sessoes, faturas, anotacoes,
-    triagem, tarefas, checkins, agenda,
+    tarefas, checkins, agenda,
 )
 
 
@@ -72,7 +71,6 @@ app.add_middleware(
 # ─── Routers ──────────────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(pacientes.router)
-app.include_router(triagem.router)
 app.include_router(sessoes.router)
 app.include_router(faturas.router)
 app.include_router(anotacoes.router)

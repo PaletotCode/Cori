@@ -1,6 +1,5 @@
-import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
-import { ArrowLeft, Link as LinkIcon, LogOut, User } from 'lucide-react-native';
+import { ArrowLeft, LogOut, User } from 'lucide-react-native';
 import React, { useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,13 +13,6 @@ export default function SettingsScreen() {
 
     const [nome, setNome] = useState(psicologo?.nome_exibicao || '');
     const [saving, setSaving] = useState(false);
-
-    const publicLink = `https://cori.app/triagem/${psicologo?.slug_link_publico}`;
-
-    const handleCopyLink = async () => {
-        await Clipboard.setStringAsync(publicLink);
-        Alert.alert("Link copiado!", "Você já pode colar no seu WhatsApp ou Instagram.");
-    };
 
     const handleSaveProfile = async () => {
         if (!nome.trim()) return;
@@ -64,25 +56,7 @@ export default function SettingsScreen() {
                 <Text style={styles.title}>Meu Consultório</Text>
                 <View style={{ width: 24 }} />
             </View>
-
             <ScrollView contentContainerStyle={styles.content}>
-                {/* Link de Triagem */}
-                <View style={styles.cardHighlight}>
-                    <View style={styles.cardHighlightIcon}>
-                        <LinkIcon color="#FFFFFF" size={24} />
-                    </View>
-                    <Text style={styles.highlightTitle}>Seu Link de Triagem</Text>
-                    <Text style={styles.highlightSub}>
-                        Envie este link para novos pacientes. Eles cairão direto na sua aba "Pacientes" já triados!
-                    </Text>
-
-                    <View style={styles.linkBox}>
-                        <Text style={styles.linkText} numberOfLines={1}>{publicLink}</Text>
-                        <TouchableOpacity style={styles.copyBtn} onPress={handleCopyLink}>
-                            <Text style={styles.copyBtnText}>Copiar</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
 
                 {/* Dados da Conta */}
                 <View style={styles.section}>
@@ -132,7 +106,7 @@ export default function SettingsScreen() {
                 </View>
 
             </ScrollView>
-        </SafeAreaView>
+        </SafeAreaView >
     );
 }
 

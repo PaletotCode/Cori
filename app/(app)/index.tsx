@@ -28,8 +28,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import ModalAprovarTriagem from '../../components/modals/ModalAprovarTriagem';
-import FirstAccessTriagem from '../../components/onboarding/FirstAccessTriagem';
 import { api } from '../../services/api';
 import { useAuthStore } from '../../store/authStore';
 import { AgendaEvento, AgendaGeralResponse, CheckInResponse, PacienteResponse, SessaoResponse, TarefaResponse } from '../../types/api';
@@ -82,10 +80,6 @@ export default function HomeScreen() {
     const [pacientesPendentes, setPacientesPendentes] = useState<PacienteResponse[]>([]);
     const [totalAtivos, setTotalAtivos] = useState(0);
 
-    // Aprovação triagem
-    const [modalAprovarVisible, setModalAprovarVisible] = useState(false);
-    const [pacienteSelecionado, setPacienteSelecionado] = useState<PacienteResponse | null>(null);
-
     const fetchDashboard = useCallback(async () => {
         try {
             const today = format(new Date(), 'yyyy-MM-dd');
@@ -99,9 +93,7 @@ export default function HomeScreen() {
 
             const todos = pacRes.data;
             const ativos = todos.filter(p => p.status === 'ativo');
-            const pendentes = todos.filter(p => p.status === 'pendente_aprovacao');
             setTotalAtivos(ativos.length);
-            setPacientesPendentes(pendentes);
 
             // Sessões de hoje
             const todaySessions = (agendaRes.data.eventos || [])
@@ -152,9 +144,6 @@ export default function HomeScreen() {
         );
     }
 
-    if (!loading && totalAtivos === 0 && pacientesPendentes.length === 0) {
-        return <FirstAccessTriagem onComplete={fetchDashboard} />;
-    }
 
     // ── Render helpers  ────────────────────────────────────────────────────────
 
@@ -280,25 +269,6 @@ export default function HomeScreen() {
         );
     };
 
-    const renderPacientePendente = (pac: PacienteResponse) => (
-        <View key={pac.id} style={styles.cardPendente}>
-            <View style={styles.cardInfo}>
-                <Text style={styles.pacienteNome}>{pac.nome_completo}</Text>
-                {pac.descricao_clinica && (
-                    <Text style={styles.pacienteMotivo} numberOfLines={2}>
-                        "{pac.descricao_clinica}"
-                    </Text>
-                )}
-            </View>
-            <TouchableOpacity
-                style={styles.btnAprovar}
-                onPress={() => { setPacienteSelecionado(pac); setModalAprovarVisible(true); }}
-            >
-                <Text style={styles.btnAprovarText}>Aprovar</Text>
-            </TouchableOpacity>
-        </View>
-    );
-
     // ── Main render ────────────────────────────────────────────────────────────
 
     return (
@@ -343,19 +313,6 @@ export default function HomeScreen() {
                     </View>
                 </View>
 
-                {/* ── Triagem Pendente ── */}
-                {pacientesPendentes.length > 0 && (
-                    <View style={styles.section}>
-                        <View style={styles.sectionTitleRow}>
-                            <AlertTriangle color="#F39C12" size={18} />
-                            <Text style={[styles.sectionTitle, { color: '#F39C12' }]}>
-                                Aguardando Avaliação ({pacientesPendentes.length})
-                            </Text>
-                        </View>
-                        {pacientesPendentes.map(renderPacientePendente)}
-                    </View>
-                )}
-
                 {/* ── Atendimentos de Hoje ── */}
                 <View style={styles.section}>
                     <View style={styles.sectionTitleRow}>
@@ -364,7 +321,6 @@ export default function HomeScreen() {
                             Atendimentos de Hoje {sesTotalHoje > 0 ? `(${sesTotalHoje})` : ''}
                         </Text>
                     </View>
-
                     {sesTotalHoje === 0 ? (
                         <View style={styles.emptyCard}>
                             <Text style={styles.emptyText}>Nenhuma sessão agendada para hoje.</Text>
@@ -380,7 +336,6 @@ export default function HomeScreen() {
                         <Clock color="#2C3E50" size={18} />
                         <Text style={styles.sectionTitle}>Atividades Recentes</Text>
                     </View>
-
                     {atividades.length === 0 ? (
                         <View style={styles.emptyCard}>
                             <Text style={styles.emptyText}>Nenhuma atividade nos últimos 7 dias.</Text>
@@ -398,7 +353,6 @@ export default function HomeScreen() {
                             Pendências Financeiras {faturasPendentes.length > 0 ? `(${faturasPendentes.length})` : ''}
                         </Text>
                     </View>
-
                     {faturasPendentes.length === 0 ? (
                         <View style={styles.emptyCard}>
                             <Text style={styles.emptyText}>🎉 Nenhuma pendência em aberto!</Text>
@@ -410,18 +364,11 @@ export default function HomeScreen() {
 
                 <View style={{ height: 40 }} />
             </ScrollView>
-
-            <ModalAprovarTriagem
-                visible={modalAprovarVisible}
-                onClose={() => setModalAprovarVisible(false)}
-                paciente={pacienteSelecionado}
-                onSuccess={fetchDashboard}
-            />
         </SafeAreaView>
     );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
     centerContainer: {
