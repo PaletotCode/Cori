@@ -1,7 +1,7 @@
-import * as SecureStore from 'expo-secure-store';
 import { create } from 'zustand';
 import { api } from '../services/api';
 import { Psicologo } from '../types/api';
+import { storage } from '../utils/storage';
 
 interface AuthState {
     psicologo: Psicologo | null;
@@ -17,28 +17,28 @@ export const useAuthStore = create<AuthState>()((set) => ({
 
     login: async (token: string) => {
         try {
-            await SecureStore.setItemAsync('access_token', token);
+            await storage.setItem('access_token', token);
 
             // O interceptor do axios fará o trabalho de injetar o token agora,
             // independentemente se for o mock token ou o token real do Google.
             const response = await api.get<Psicologo>('/auth/me');
             set({ psicologo: response.data, isLoading: false });
         } catch (error) {
-            await SecureStore.deleteItemAsync('access_token');
+            await storage.deleteItem('access_token');
             set({ psicologo: null, isLoading: false });
             throw error;
         }
     },
 
     logout: async () => {
-        await SecureStore.deleteItemAsync('access_token');
+        await storage.deleteItem('access_token');
         set({ psicologo: null, isLoading: false });
     },
 
     checkAuth: async () => {
         set({ isLoading: true });
         try {
-            const token = await SecureStore.getItemAsync('access_token');
+            const token = await storage.getItem('access_token');
             if (!token) {
                 set({ psicologo: null, isLoading: false });
                 return;
@@ -48,7 +48,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
             set({ psicologo: response.data, isLoading: false });
         } catch (error) {
             // Em caso de 401, o interceptor também avisará, mas limpamos aqui garantidamente
-            await SecureStore.deleteItemAsync('access_token');
+            await storage.deleteItem('access_token');
             set({ psicologo: null, isLoading: false });
         }
     },
