@@ -69,6 +69,8 @@ def gerar_agenda_geral(
                 Sessao.data_hora_inicio >= dt_inicio,
                 Sessao.data_hora_inicio <= dt_fim,
             )
+            .order_by(Sessao.data_hora_inicio)
+            .limit(500)
             .all()
         )
         for s in sessoes:
@@ -94,6 +96,8 @@ def gerar_agenda_geral(
                 TarefaPaciente.data_vencimento >= dt_inicio,
                 TarefaPaciente.data_vencimento <= dt_fim,
             )
+            .order_by(TarefaPaciente.data_vencimento)
+            .limit(200)
             .all()
         )
         for t in tarefas:
@@ -118,6 +122,8 @@ def gerar_agenda_geral(
                 CheckInDiario.data_registro >= dt_inicio,
                 CheckInDiario.data_registro <= dt_fim,
             )
+            .order_by(CheckInDiario.data_registro)
+            .limit(200)
             .all()
         )
         for c in checkins:
