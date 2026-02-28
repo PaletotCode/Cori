@@ -70,18 +70,26 @@ function RootLayoutNav() {
 
     const inAuthGroup = segments[0] === '(auth)';
     const inOnboardingGroup = segments[0] === '(onboarding)';
+    const inAppGroup = segments[0] === '(app)';
 
-    if (!psicologo && !inAuthGroup) {
-      // Not logged in, force to login screen
-      router.replace('/(auth)/login' as any);
-    } else if (psicologo) {
-      // Logged in
-      if (!psicologo.onboarding_concluido && !inOnboardingGroup) {
-        // Redireciona para o Wizard de configuração
-        router.replace('/(onboarding)/wizard' as any);
-      } else if (psicologo.onboarding_concluido && (inAuthGroup || inOnboardingGroup)) {
-        // Já fez onboarding, force to app
-        router.replace('/(app)' as any);
+    if (!psicologo) {
+      if (!inAuthGroup) {
+        // Redireciona para login de forma impositiva se não estiver logado
+        router.replace('/(auth)/login' as any);
+      }
+    } else {
+      // Usuário está logado
+      if (!psicologo.onboarding_concluido) {
+        if (!inOnboardingGroup) {
+          // Bloqueia e força o onboarding
+          router.replace('/(onboarding)/wizard' as any);
+        }
+      } else {
+        // Já fez onboarding
+        if (!inAppGroup) {
+          // Se tentar acessar auth ou onboarding tendo sessão, redireciona para agenda principal
+          router.replace('/(app)/agenda' as any);
+        }
       }
     }
   }, [psicologo, isLoading, segments]);

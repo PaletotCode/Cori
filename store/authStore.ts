@@ -76,8 +76,6 @@ export const useAuthStore = create<AuthState>()((set) => ({
                 modelo_cobranca_padrao: 'por_sessao',
                 valor_sessao_padrao: null,
                 chave_pix: null,
-                enviar_lembretes_automaticos: true,
-                antecedencia_lembrete_horas: 24,
                 cobrar_faltas_nao_avisadas: false,
             }
         });
@@ -101,8 +99,6 @@ export const useAuthStore = create<AuthState>()((set) => ({
                 modelo_cobranca_padrao: 'pacote_mensal_pos',
                 valor_sessao_padrao: 150.0,
                 chave_pix: 'pix@cori.app',
-                enviar_lembretes_automaticos: true,
-                antecedencia_lembrete_horas: 24,
                 cobrar_faltas_nao_avisadas: false,
             }
         });

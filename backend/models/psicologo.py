@@ -48,8 +48,6 @@ class Psicologo(Base):
     modelo_cobranca_padrao: Mapped[str] = mapped_column(String(50), default="por_sessao", server_default="por_sessao") # Opções: por_sessao, pacote_mensal_pos, pacote_mensal_pre
     valor_sessao_padrao: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     chave_pix: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    enviar_lembretes_automaticos: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
-    antecedencia_lembrete_horas: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
     cobrar_faltas_nao_avisadas: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     data_criacao: Mapped[datetime] = mapped_column(

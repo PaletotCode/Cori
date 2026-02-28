@@ -1,12 +1,12 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
+import { Check, ChevronLeft, ChevronRight, Clock, Wallet } from 'lucide-react-native';
 import React, { useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
-    Dimensions, KeyboardAvoidingView, Platform,
-    ScrollView,
-    StyleSheet,
-    Switch,
+    Dimensions,
+    FlatList,
+    Keyboard,
+    KeyboardAvoidingView, Platform,
     Text,
     TextInput,
     TouchableOpacity,
@@ -17,7 +17,6 @@ import { useAuthStore } from '../../store/authStore';
 
 const { width } = Dimensions.get('window');
 
-// Tipos para o estado do formulário
 interface WizardState {
     nome_exibicao: string;
     crp: string;
@@ -26,25 +25,23 @@ interface WizardState {
     dias_atendimento: string[];
     modelo_cobranca_padrao: string;
     valor_sessao_padrao: string;
-    chave_pix: string;
-    enviar_lembretes_automaticos: boolean;
-    antecedencia_lembrete_horas: number;
     cobrar_faltas_nao_avisadas: boolean;
 }
 
 const DIAS_SEMANA = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-const MODELOS_COBRANCA = [
-    { id: 'por_sessao', label: 'Por Sessão (Avulso)' },
-    { id: 'pacote_mensal_pos', label: 'Pacote Mensal (Pós-pago)' },
-    { id: 'pacote_mensal_pre', label: 'Pacote Mensal (Pré-pago)' },
-];
+const DURACAO_OPCOES = [45, 50, 60];
+const INTERVALO_OPCOES = [0, 10, 15, 30];
 
 export default function WizardScreen() {
     const { psicologo, checkAuth } = useAuthStore();
-    const scrollRef = useRef<ScrollView>(null);
+    const flatListRef = useRef<FlatList>(null);
 
     const [currentStep, setCurrentStep] = useState(0);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Controle de campos "Personalizados"
+    const [customDuracao, setCustomDuracao] = useState(false);
+    const [customIntervalo, setCustomIntervalo] = useState(false);
 
     const [form, setForm] = useState<WizardState>({
         nome_exibicao: psicologo?.nome_exibicao || '',
@@ -54,9 +51,6 @@ export default function WizardScreen() {
         dias_atendimento: ['Seg', 'Ter', 'Qua', 'Qui', 'Sex'],
         modelo_cobranca_padrao: 'por_sessao',
         valor_sessao_padrao: '',
-        chave_pix: '',
-        enviar_lembretes_automaticos: true,
-        antecedencia_lembrete_horas: 24,
         cobrar_faltas_nao_avisadas: false,
     });
 
@@ -74,20 +68,22 @@ export default function WizardScreen() {
     };
 
     const handleNext = () => {
-        if (currentStep < 3) {
+        Keyboard.dismiss();
+        if (currentStep < 2) {
             const nextStep = currentStep + 1;
+            flatListRef.current?.scrollToIndex({ index: nextStep, animated: true });
             setCurrentStep(nextStep);
-            scrollRef.current?.scrollTo({ x: nextStep * width, animated: true });
         } else {
             submitWizard();
         }
     };
 
     const handleBack = () => {
+        Keyboard.dismiss();
         if (currentStep > 0) {
             const prevStep = currentStep - 1;
+            flatListRef.current?.scrollToIndex({ index: prevStep, animated: true });
             setCurrentStep(prevStep);
-            scrollRef.current?.scrollTo({ x: prevStep * width, animated: true });
         }
     };
 
@@ -100,9 +96,7 @@ export default function WizardScreen() {
             };
 
             await api.patch('/auth/onboarding', payload);
-
-            // Atualiza global state (forçando o redirect no layout)
-            await checkAuth();
+            await checkAuth(); // Redireciona via layout guard
 
         } catch (error) {
             console.error('Erro no onboarding:', error);
@@ -111,429 +105,311 @@ export default function WizardScreen() {
         }
     };
 
-    const renderDots = () => {
-        return (
-            <View style={styles.dotsContainer}>
-                {[0, 1, 2, 3].map(step => (
-                    <View
-                        key={step}
-                        style={[
-                            styles.dot,
-                            currentStep === step && styles.dotActive,
-                            currentStep > step && styles.dotCompleted
-                        ]}
-                    />
-                ))}
+    const isStep1Valid = form.nome_exibicao.trim().length > 0;
+    const isStep2Valid = form.dias_atendimento.length > 0 && form.duracao_sessao_padrao_minutos > 0;
+
+    const renderSlide1 = () => (
+        <View style={{ width, paddingHorizontal: 24, paddingTop: 32 }}>
+            <View className="items-center mb-8">
+                <Text className="font-cori-bold text-4xl text-slate-800 text-center mb-4 leading-tight">
+                    Seja muito bem-vindo ao Cori! ✨
+                </Text>
+                <Text className="font-cori text-base text-slate-500 text-center px-4 leading-relaxed">
+                    Vamos preparar o seu consultório digital. Como você gosta de ser chamado(a) pelos seus pacientes?
+                </Text>
             </View>
-        );
+
+            <View className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+                <View className="mb-6">
+                    <Text className="font-cori-medium text-slate-700 mb-2 ml-1">Nome de Exibição <Text className="text-red-400">*</Text></Text>
+                    <TextInput
+                        className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-4 text-base font-cori text-slate-800"
+                        placeholder="Ex: Dra. Ana Silva"
+                        placeholderTextColor="#9ca3af"
+                        value={form.nome_exibicao}
+                        onChangeText={(t) => updateForm('nome_exibicao', t)}
+                    />
+                </View>
+
+                <View>
+                    <Text className="font-cori-medium text-slate-700 mb-2 ml-1">CRP (Opcional)</Text>
+                    <TextInput
+                        className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-4 text-base font-cori text-slate-800"
+                        placeholder="Ex: 06/123456"
+                        placeholderTextColor="#9ca3af"
+                        value={form.crp}
+                        onChangeText={(t) => updateForm('crp', t)}
+                    />
+                    <Text className="font-cori text-xs text-slate-400 mt-2 ml-1">
+                        Você pode adicionar ou alterar isso depois nas configurações.
+                    </Text>
+                </View>
+            </View>
+        </View>
+    );
+
+    const renderSlide2 = () => (
+        <View style={{ width, paddingHorizontal: 24, paddingTop: 32 }}>
+            <View className="flex-row items-center justify-center mb-6">
+                <View className="bg-blue-50 p-4 rounded-full">
+                    <Clock size={32} color="#3b82f6" />
+                </View>
+            </View>
+            <Text className="font-cori-bold text-3xl text-slate-800 text-center mb-2">
+                Como funciona o seu tempo?
+            </Text>
+            <Text className="font-cori text-base text-slate-500 text-center mb-8">
+                Ajuste os horários da sua agenda padrão. Padrões ajudam a automatizar a sua rotina.
+            </Text>
+
+            {/* Duração da Sessão */}
+            <View className="mb-8">
+                <Text className="font-cori-medium text-slate-700 mb-3 ml-1">Duração da sessão</Text>
+                <View className="flex-row flex-wrap gap-2">
+                    {DURACAO_OPCOES.map(min => (
+                        <TouchableOpacity
+                            key={min}
+                            onPress={() => { setCustomDuracao(false); updateForm('duracao_sessao_padrao_minutos', min); }}
+                            className={`px-5 py-3 rounded-2xl border ${!customDuracao && form.duracao_sessao_padrao_minutos === min ? 'bg-slate-800 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}
+                        >
+                            <Text className={`font-cori-medium ${!customDuracao && form.duracao_sessao_padrao_minutos === min ? 'text-white' : 'text-slate-600'}`}>{min} min</Text>
+                        </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity
+                        onPress={() => setCustomDuracao(true)}
+                        className={`px-5 py-3 rounded-2xl border ${customDuracao ? 'bg-slate-800 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}
+                    >
+                        <Text className={`font-cori-medium ${customDuracao ? 'text-white' : 'text-slate-600'}`}>Personalizado</Text>
+                    </TouchableOpacity>
+                </View>
+                {customDuracao && (
+                    <View className="mt-3 flex-row items-center">
+                        <TextInput
+                            className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-base font-cori text-slate-800"
+                            placeholder="Digite os minutos..."
+                            keyboardType="numeric"
+                            value={String(form.duracao_sessao_padrao_minutos)}
+                            onChangeText={(t) => updateForm('duracao_sessao_padrao_minutos', parseInt(t) || 0)}
+                        />
+                        <Text className="font-cori-medium text-slate-500 ml-3">minutos</Text>
+                    </View>
+                )}
+            </View>
+
+            {/* Intervalo */}
+            <View className="mb-8">
+                <Text className="font-cori-medium text-slate-700 mb-3 ml-1">Intervalo entre sessões</Text>
+                <View className="flex-row flex-wrap gap-2">
+                    {INTERVALO_OPCOES.map(min => (
+                        <TouchableOpacity
+                            key={min}
+                            onPress={() => { setCustomIntervalo(false); updateForm('intervalo_sessao_padrao_minutos', min); }}
+                            className={`px-5 py-3 rounded-2xl border ${!customIntervalo && form.intervalo_sessao_padrao_minutos === min ? 'bg-slate-800 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}
+                        >
+                            <Text className={`font-cori-medium ${!customIntervalo && form.intervalo_sessao_padrao_minutos === min ? 'text-white' : 'text-slate-600'}`}>
+                                {min === 0 ? 'Nenhum' : `${min} min`}
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity
+                        onPress={() => setCustomIntervalo(true)}
+                        className={`px-5 py-3 rounded-2xl border ${customIntervalo ? 'bg-slate-800 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}
+                    >
+                        <Text className={`font-cori-medium ${customIntervalo ? 'text-white' : 'text-slate-600'}`}>Outro</Text>
+                    </TouchableOpacity>
+                </View>
+                {customIntervalo && (
+                    <View className="mt-3 flex-row items-center">
+                        <TextInput
+                            className="flex-1 bg-white border border-slate-200 rounded-xl px-4 py-3 text-base font-cori text-slate-800"
+                            placeholder="Digite os minutos..."
+                            keyboardType="numeric"
+                            value={String(form.intervalo_sessao_padrao_minutos)}
+                            onChangeText={(t) => updateForm('intervalo_sessao_padrao_minutos', parseInt(t) || 0)}
+                        />
+                        <Text className="font-cori-medium text-slate-500 ml-3">minutos</Text>
+                    </View>
+                )}
+            </View>
+
+            {/* Dias da Semana */}
+            <View>
+                <Text className="font-cori-medium text-slate-700 mb-3 ml-1">Dias de atendimento base</Text>
+                <View className="flex-row flex-wrap gap-2">
+                    {DIAS_SEMANA.map(dia => {
+                        const active = form.dias_atendimento.includes(dia);
+                        return (
+                            <TouchableOpacity
+                                key={dia}
+                                onPress={() => toggleDia(dia)}
+                                className={`w-14 items-center py-3 rounded-2xl border ${active ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200'}`}
+                            >
+                                <Text className={`font-cori-medium ${active ? 'text-blue-600' : 'text-slate-500'}`}>{dia}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </View>
+            </View>
+        </View>
+    );
+
+    const renderSlide3 = () => (
+        <View style={{ width, paddingHorizontal: 24, paddingTop: 32 }}>
+            <View className="flex-row items-center justify-center mb-6">
+                <View className="bg-emerald-50 p-4 rounded-full">
+                    <Wallet size={32} color="#10b981" />
+                </View>
+            </View>
+            <Text className="font-cori-bold text-3xl text-slate-800 text-center mb-2">
+                Regras do Consultório
+            </Text>
+            <Text className="font-cori text-base text-slate-500 text-center mb-8">
+                Defina sua política para facilitar a gestão financeira e cobranças no futuro.
+            </Text>
+
+            <View className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 mb-6">
+                <Text className="font-cori-medium text-slate-700 mb-3">Qual o seu modelo de cobrança base?</Text>
+
+                <TouchableOpacity
+                    onPress={() => updateForm('modelo_cobranca_padrao', 'por_sessao')}
+                    className={`flex-row items-center p-4 rounded-2xl border mb-3 ${form.modelo_cobranca_padrao === 'por_sessao' ? 'bg-emerald-50 border-emerald-500' : 'bg-white border-slate-200'}`}
+                >
+                    <View className={`w-5 h-5 rounded-full border items-center justify-center mr-3 ${form.modelo_cobranca_padrao === 'por_sessao' ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300'}`}>
+                        {form.modelo_cobranca_padrao === 'por_sessao' && <Check size={12} color="#FFF" />}
+                    </View>
+                    <Text className={`font-cori-medium text-base ${form.modelo_cobranca_padrao === 'por_sessao' ? 'text-emerald-800' : 'text-slate-600'}`}>Por Sessão (Avulso)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    onPress={() => updateForm('modelo_cobranca_padrao', 'pacote_mensal')}
+                    className={`flex-row items-center p-4 rounded-2xl border ${form.modelo_cobranca_padrao === 'pacote_mensal' ? 'bg-emerald-50 border-emerald-500' : 'bg-white border-slate-200'}`}
+                >
+                    <View className={`w-5 h-5 rounded-full border items-center justify-center mr-3 ${form.modelo_cobranca_padrao === 'pacote_mensal' ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300'}`}>
+                        {form.modelo_cobranca_padrao === 'pacote_mensal' && <Check size={12} color="#FFF" />}
+                    </View>
+                    <Text className={`font-cori-medium text-base ${form.modelo_cobranca_padrao === 'pacote_mensal' ? 'text-emerald-800' : 'text-slate-600'}`}>Pacote Mensal</Text>
+                </TouchableOpacity>
+            </View>
+
+            <View className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 mb-6">
+                <Text className="font-cori-medium text-slate-700 mb-3">Qual o valor base da sua sessão?</Text>
+                <View className="flex-row items-center bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3">
+                    <Text className="font-cori-medium text-slate-400 mr-2 text-lg">R$</Text>
+                    <TextInput
+                        className="flex-1 text-lg font-cori text-slate-800 border-l border-slate-200 pl-3"
+                        placeholder="0,00"
+                        placeholderTextColor="#9ca3af"
+                        keyboardType="numeric"
+                        value={form.valor_sessao_padrao}
+                        onChangeText={(t) => updateForm('valor_sessao_padrao', t)}
+                    />
+                </View>
+            </View>
+
+            <View className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+                <Text className="font-cori-medium text-slate-700 mb-3">Política para faltas não avisadas</Text>
+
+                <TouchableOpacity
+                    onPress={() => updateForm('cobrar_faltas_nao_avisadas', true)}
+                    className={`flex-row items-center p-4 rounded-2xl border mb-3 ${form.cobrar_faltas_nao_avisadas ? 'bg-red-50 border-red-300' : 'bg-white border-slate-200'}`}
+                >
+                    <View className={`w-5 h-5 rounded-full border items-center justify-center mr-3 ${form.cobrar_faltas_nao_avisadas ? 'border-red-500 bg-red-500' : 'border-slate-300'}`}>
+                        {form.cobrar_faltas_nao_avisadas && <Check size={12} color="#FFF" />}
+                    </View>
+                    <Text className={`font-cori-medium text-base flex-1 ${form.cobrar_faltas_nao_avisadas ? 'text-red-800' : 'text-slate-600'}`}>Cobro a sessão normalmente</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                    onPress={() => updateForm('cobrar_faltas_nao_avisadas', false)}
+                    className={`flex-row items-center p-4 rounded-2xl border ${!form.cobrar_faltas_nao_avisadas ? 'bg-slate-100 border-slate-300' : 'bg-white border-slate-200'}`}
+                >
+                    <View className={`w-5 h-5 rounded-full border items-center justify-center mr-3 ${!form.cobrar_faltas_nao_avisadas ? 'border-slate-500 bg-slate-500' : 'border-slate-300'}`}>
+                        {!form.cobrar_faltas_nao_avisadas && <Check size={12} color="#FFF" />}
+                    </View>
+                    <Text className={`font-cori-medium text-base flex-1 ${!form.cobrar_faltas_nao_avisadas ? 'text-slate-800' : 'text-slate-600'}`}>Não cobro</Text>
+                </TouchableOpacity>
+            </View>
+
+        </View>
+    );
+
+    const canGoNext = () => {
+        if (currentStep === 0) return isStep1Valid;
+        if (currentStep === 1) return isStep2Valid;
+        return true;
     };
 
     return (
         <KeyboardAvoidingView
-            style={styles.container}
+            style={{ flex: 1, backgroundColor: '#FAF9F6' }}
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-            <View style={styles.header}>
-                {renderDots()}
-                <Text style={styles.stepsText}>Passo {currentStep + 1} de 4</Text>
+            {/* Progress Bar Topo */}
+            <View className="pt-16 pb-2 px-6">
+                <View className="flex-row items-center justify-between mb-4">
+                    <Text className="font-cori-bold text-slate-400 text-sm tracking-widest uppercase">
+                        Passo {currentStep + 1} de 3
+                    </Text>
+                    <View className="bg-slate-200 rounded-full px-3 py-1">
+                        <Text className="font-cori-medium text-slate-500 text-xs text-center">Configuração Mínima</Text>
+                    </View>
+                </View>
+                <View className="h-1.5 bg-slate-200 rounded-full overflow-hidden flex-row">
+                    <View
+                        style={{ width: `${((currentStep + 1) / 3) * 100}%` }}
+                        className="h-full bg-slate-800 rounded-full transition-all duration-300"
+                    />
+                </View>
             </View>
 
-            <ScrollView
-                ref={scrollRef}
+            <FlatList
+                ref={flatListRef}
+                data={['slide1', 'slide2', 'slide3']}
+                keyExtractor={(item) => item}
                 horizontal
                 pagingEnabled
                 scrollEnabled={false}
                 showsHorizontalScrollIndicator={false}
-            >
-                {/* PASSO 1: Identidade */}
-                <View style={styles.slide}>
-                    <Text style={styles.title}>A Cara da Clínica</Text>
-                    <Text style={styles.subtitle}>Como você quer que seus pacientes te vejam?</Text>
+                className="flex-1"
+                renderItem={({ index }) => {
+                    if (index === 0) return renderSlide1();
+                    if (index === 1) return renderSlide2();
+                    if (index === 2) return renderSlide3();
+                    return null;
+                }}
+            />
 
-                    <View style={styles.avatarContainer}>
-                        <View style={styles.avatarPlaceholder}>
-                            <FontAwesome name="user" size={40} color="#BDC3C7" />
-                        </View>
-                        <Text style={styles.avatarInfo}>A foto de perfil poderá ser alterada nas configurações.</Text>
-                    </View>
+            {/* Bottom Controls */}
+            <View className={`px-6 pt-4 pb-10 bg-[#FAF9F6] border-t border-slate-100 flex-row ${currentStep > 0 ? 'justify-between' : 'justify-end'} items-center`}>
 
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Como você quer ser chamado?</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Ex: Dra. Ana Silva"
-                            value={form.nome_exibicao}
-                            onChangeText={(t) => updateForm('nome_exibicao', t)}
-                        />
-                    </View>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Qual o seu número de CRP?</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Ex: 06/123456"
-                            value={form.crp}
-                            onChangeText={(t) => updateForm('crp', t)}
-                        />
-                    </View>
-                </View>
-
-                {/* PASSO 2: O Relógio */}
-                <View style={styles.slide}>
-                    <Text style={styles.title}>O Relógio</Text>
-                    <Text style={styles.subtitle}>Vamos configurar sua agenda padrão.</Text>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Duração padrão das sessões:</Text>
-                        <View style={styles.rowButtons}>
-                            {[45, 50, 60].map(min => (
-                                <TouchableOpacity
-                                    key={min}
-                                    style={[styles.chip, form.duracao_sessao_padrao_minutos === min && styles.chipActive]}
-                                    onPress={() => updateForm('duracao_sessao_padrao_minutos', min)}
-                                >
-                                    <Text style={[styles.chipText, form.duracao_sessao_padrao_minutos === min && styles.chipTextActive]}>{min} min</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Intervalo entre pacientes:</Text>
-                        <View style={styles.rowButtons}>
-                            {[0, 10, 15, 30].map(min => (
-                                <TouchableOpacity
-                                    key={min}
-                                    style={[styles.chip, form.intervalo_sessao_padrao_minutos === min && styles.chipActive]}
-                                    onPress={() => updateForm('intervalo_sessao_padrao_minutos', min)}
-                                >
-                                    <Text style={[styles.chipText, form.intervalo_sessao_padrao_minutos === min && styles.chipTextActive]}>
-                                        {min === 0 ? 'Sem intervalo' : `${min} min`}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </View>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Dias da semana que você atende:</Text>
-                        <View style={styles.rowButtonsWrap}>
-                            {DIAS_SEMANA.map(dia => {
-                                const active = form.dias_atendimento.includes(dia);
-                                return (
-                                    <TouchableOpacity
-                                        key={dia}
-                                        style={[styles.chip, active && styles.chipActive]}
-                                        onPress={() => toggleDia(dia)}
-                                    >
-                                        <Text style={[styles.chipText, active && styles.chipTextActive]}>{dia}</Text>
-                                    </TouchableOpacity>
-                                );
-                            })}
-                        </View>
-                    </View>
-                </View>
-
-                {/* PASSO 3: O Bolso */}
-                <View style={styles.slide}>
-                    <Text style={styles.title}>O Bolso</Text>
-                    <Text style={styles.subtitle}>Motor Financeiro da sua Clínica.</Text>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Modelo de cobrança mais comum:</Text>
-                        {MODELOS_COBRANCA.map(mod => (
-                            <TouchableOpacity
-                                key={mod.id}
-                                style={[styles.cardButton, form.modelo_cobranca_padrao === mod.id && styles.cardButtonActive]}
-                                onPress={() => updateForm('modelo_cobranca_padrao', mod.id)}
-                            >
-                                <Text style={[styles.cardButtonText, form.modelo_cobranca_padrao === mod.id && styles.cardButtonTextActive]}>{mod.label}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Valor padrão da sessão (R$):</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="Ex: 150,00"
-                            keyboardType="numeric"
-                            value={form.valor_sessao_padrao}
-                            onChangeText={(t) => updateForm('valor_sessao_padrao', t)}
-                        />
-                    </View>
-
-                    <View style={styles.inputGroup}>
-                        <Text style={styles.label}>Chave PIX padrão para recebimentos:</Text>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="CPF, E-mail ou Celular"
-                            value={form.chave_pix}
-                            onChangeText={(t) => updateForm('chave_pix', t)}
-                        />
-                    </View>
-                </View>
-
-                {/* PASSO 4: O Assistente */}
-                <View style={styles.slide}>
-                    <Text style={styles.title}>O Assistente</Text>
-                    <Text style={styles.subtitle}>Regras de Engajamento e Lembretes automáticos.</Text>
-
-                    <View style={styles.switchRow}>
-                        <View style={{ flex: 1, paddingRight: 16 }}>
-                            <Text style={styles.label}>Enviar lembretes no WhatsApp para confirmar sessão?</Text>
-                            <Text style={styles.subtext}>O Cori enviará um link inteligente para o paciente confirmar ou reagendar.</Text>
-                        </View>
-                        <Switch
-                            value={form.enviar_lembretes_automaticos}
-                            onValueChange={(val) => updateForm('enviar_lembretes_automaticos', val)}
-                            trackColor={{ false: "#E0E0E0", true: "#4ECDC4" }}
-                        />
-                    </View>
-
-                    {form.enviar_lembretes_automaticos && (
-                        <View style={styles.inputGroup}>
-                            <Text style={styles.label}>Com qual antecedência?</Text>
-                            <View style={styles.rowButtons}>
-                                {[24, 48].map(horas => (
-                                    <TouchableOpacity
-                                        key={horas}
-                                        style={[styles.chip, form.antecedencia_lembrete_horas === horas && styles.chipActive]}
-                                        onPress={() => updateForm('antecedencia_lembrete_horas', horas)}
-                                    >
-                                        <Text style={[styles.chipText, form.antecedencia_lembrete_horas === horas && styles.chipTextActive]}>{horas}h antes</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
-                        </View>
-                    )}
-
-                    <View style={[styles.switchRow, { marginTop: 24 }]}>
-                        <View style={{ flex: 1, paddingRight: 16 }}>
-                            <Text style={styles.label}>Faltas não avisadas devem ser cobradas?</Text>
-                            <Text style={styles.subtext}>Pacientes que não comparecerem sem aviso prévio terão a sessão lançada na fatura.</Text>
-                        </View>
-                        <Switch
-                            value={form.cobrar_faltas_nao_avisadas}
-                            onValueChange={(val) => updateForm('cobrar_faltas_nao_avisadas', val)}
-                            trackColor={{ false: "#E0E0E0", true: "#FF6B6B" }}
-                        />
-                    </View>
-                </View>
-            </ScrollView>
-
-            <View style={styles.footer}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    {currentStep > 0 ? (
-                        <TouchableOpacity style={styles.footerBtnBack} onPress={handleBack} disabled={isSubmitting}>
-                            <Text style={styles.footerBtnBackText}>Voltar</Text>
-                        </TouchableOpacity>
-                    ) : (
-                        <View style={{ width: 80 }} /> // Espaçador vago
-                    )}
-
+                {currentStep > 0 && (
                     <TouchableOpacity
-                        style={[styles.footerBtnNext, isSubmitting && { opacity: 0.7 }]}
-                        onPress={handleNext}
-                        disabled={isSubmitting || (currentStep === 0 && !form.nome_exibicao.trim())}
+                        onPress={handleBack}
+                        disabled={isSubmitting}
+                        className="flex-row items-center p-4 bg-white border border-slate-200 rounded-2xl shadow-sm"
                     >
-                        {isSubmitting ? (
-                            <ActivityIndicator color="#FFF" />
-                        ) : (
-                            <Text style={styles.footerBtnNextText}>{currentStep === 3 ? 'Finalizar' : 'Continuar'}</Text>
-                        )}
+                        <ChevronLeft size={24} color="#64748b" />
                     </TouchableOpacity>
-                </View>
+                )}
+
+                <TouchableOpacity
+                    onPress={handleNext}
+                    disabled={!canGoNext() || isSubmitting}
+                    className={`flex-row items-center px-8 py-5 rounded-2xl ${canGoNext() ? 'bg-slate-800 shadow-lg shadow-slate-900/20' : 'bg-slate-300'} flex-1 ${currentStep > 0 ? 'ml-4' : ''} justify-center`}
+                >
+                    {isSubmitting ? (
+                        <ActivityIndicator color="#FFF" />
+                    ) : (
+                        <>
+                            <Text className="font-cori-bold text-white text-lg mr-2">
+                                {currentStep === 2 ? 'Finalizar e Entrar' : 'Continuar'}
+                            </Text>
+                            {currentStep < 2 && <ChevronRight size={20} color="#FFF" />}
+                            {currentStep === 2 && <Check size={20} color="#FFF" />}
+                        </>
+                    )}
+                </TouchableOpacity>
             </View>
         </KeyboardAvoidingView>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#FAF9F6',
-    },
-    header: {
-        paddingTop: 60,
-        paddingBottom: 20,
-        alignItems: 'center',
-    },
-    dotsContainer: {
-        flexDirection: 'row',
-        marginBottom: 8,
-    },
-    dot: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: '#E0E0E0',
-        marginHorizontal: 4,
-    },
-    dotActive: {
-        backgroundColor: '#2C3E50',
-        width: 24,
-    },
-    dotCompleted: {
-        backgroundColor: '#2C3E50',
-    },
-    stepsText: {
-        fontFamily: 'Cori',
-        fontSize: 14,
-        color: '#7F8C8D',
-    },
-    slide: {
-        width: width,
-        padding: 24,
-    },
-    title: {
-        fontFamily: 'Cori-Bold',
-        fontSize: 32,
-        color: '#2C3E50',
-        marginBottom: 8,
-    },
-    subtitle: {
-        fontFamily: 'Cori',
-        fontSize: 16,
-        color: '#7F8C8D',
-        marginBottom: 32,
-    },
-    inputGroup: {
-        marginBottom: 24,
-    },
-    label: {
-        fontFamily: 'Cori-SemiBold',
-        fontSize: 16,
-        color: '#2C3E50',
-        marginBottom: 8,
-    },
-    subtext: {
-        fontFamily: 'Cori',
-        fontSize: 13,
-        color: '#95A5A6',
-        marginTop: 4,
-    },
-    input: {
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        backgroundColor: '#FFF',
-        borderRadius: 12,
-        padding: 16,
-        fontSize: 16,
-        fontFamily: 'Cori',
-        color: '#333',
-    },
-    avatarContainer: {
-        alignItems: 'center',
-        marginBottom: 32,
-    },
-    avatarPlaceholder: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        backgroundColor: '#EFEFEF',
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 2,
-        borderColor: '#E0E0E0',
-        borderStyle: 'dashed',
-        marginBottom: 12,
-    },
-    avatarInfo: {
-        fontFamily: 'Cori',
-        fontSize: 14,
-        color: '#95A5A6',
-        textAlign: 'center',
-    },
-    rowButtons: {
-        flexDirection: 'row',
-        gap: 8,
-    },
-    rowButtonsWrap: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 8,
-    },
-    chip: {
-        backgroundColor: '#FFF',
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        borderRadius: 20,
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-    },
-    chipActive: {
-        backgroundColor: '#2C3E50',
-        borderColor: '#2C3E50',
-    },
-    chipText: {
-        fontFamily: 'Cori-Medium',
-        color: '#7F8C8D',
-        fontSize: 14,
-    },
-    chipTextActive: {
-        color: '#FFFFFF',
-    },
-    cardButton: {
-        backgroundColor: '#FFF',
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 8,
-    },
-    cardButtonActive: {
-        backgroundColor: '#E8F5E9',
-        borderColor: '#4CAF50',
-    },
-    cardButtonText: {
-        fontFamily: 'Cori-Medium',
-        fontSize: 16,
-        color: '#333',
-    },
-    cardButtonTextActive: {
-        color: '#2E7D32',
-    },
-    switchRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        backgroundColor: '#FFF',
-        padding: 16,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-    },
-    footer: {
-        padding: 24,
-        paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-        backgroundColor: '#FAF9F6',
-        borderTopWidth: 1,
-        borderTopColor: '#EFEFEF',
-    },
-    footerBtnNext: {
-        backgroundColor: '#2C3E50',
-        paddingVertical: 16,
-        paddingHorizontal: 32,
-        borderRadius: 12,
-        alignItems: 'center',
-        justifyContent: 'center',
-        minWidth: 140,
-    },
-    footerBtnNextText: {
-        fontFamily: 'Cori-Bold',
-        fontSize: 16,
-        color: '#FFF',
-    },
-    footerBtnBack: {
-        paddingVertical: 16,
-        paddingHorizontal: 16,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    footerBtnBackText: {
-        fontFamily: 'Cori-Medium',
-        fontSize: 16,
-        color: '#7F8C8D',
-    },
-});

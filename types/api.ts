@@ -15,8 +15,6 @@ export interface Psicologo {
     modelo_cobranca_padrao: string;
     valor_sessao_padrao: number | null;
     chave_pix: string | null;
-    enviar_lembretes_automaticos: boolean;
-    antecedencia_lembrete_horas: number;
     cobrar_faltas_nao_avisadas: boolean;
 }
 
