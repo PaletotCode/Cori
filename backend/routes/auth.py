@@ -9,7 +9,7 @@ from backend.core.database import get_db
 from backend.core.google_auth import GoogleAuthError, GoogleUserInfo, verificar_google_token
 from backend.core.security import create_access_token, get_current_psicologo_id
 from backend.models.psicologo import Psicologo
-from backend.schemas.psicologo import PsicologoResponse, PsicologoMeUpdate
+from backend.schemas.psicologo import PsicologoResponse, PsicologoMeUpdate, PsicologoOnboardingUpdate
 from backend.services import psicologo_service
 
 logger = logging.getLogger(__name__)
@@ -117,6 +117,34 @@ def update_me(
     update_data = dados.model_dump(exclude_none=True)
     for field, value in update_data.items():
         setattr(psicologo, field, value)
+
+    db.commit()
+    db.refresh(psicologo)
+    return PsicologoResponse.model_validate(psicologo)
+
+
+@router.patch(
+    "/onboarding",
+    response_model=PsicologoResponse,
+    summary="Concluir onboarding do psicólogo"
+)
+def confirmar_onboarding(
+    dados: PsicologoOnboardingUpdate,
+    db: Session = Depends(get_db),
+    psicologo_id: int = Depends(get_current_psicologo_id),
+) -> PsicologoResponse:
+    psicologo: Psicologo | None = db.query(Psicologo).filter(Psicologo.id == psicologo_id).first()
+    if not psicologo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Psicólogo não encontrado.")
+
+    # Atualiza as configurações do onboarding
+    update_data = dados.model_dump()
+    for field, value in update_data.items():
+        setattr(psicologo, field, value)
+
+    # Força a flag de conclusão
+    psicologo.onboarding_concluido = True
 
     db.commit()
     db.refresh(psicologo)

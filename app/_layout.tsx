@@ -69,13 +69,20 @@ function RootLayoutNav() {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const inOnboardingGroup = segments[0] === '(onboarding)';
 
     if (!psicologo && !inAuthGroup) {
       // Not logged in, force to login screen
-      router.replace('/(auth)/login');
-    } else if (psicologo && inAuthGroup) {
-      // Logged in, force to app
-      router.replace('/(app)');
+      router.replace('/(auth)/login' as any);
+    } else if (psicologo) {
+      // Logged in
+      if (!psicologo.onboarding_concluido && !inOnboardingGroup) {
+        // Redireciona para o Wizard de configuração
+        router.replace('/(onboarding)/wizard' as any);
+      } else if (psicologo.onboarding_concluido && (inAuthGroup || inOnboardingGroup)) {
+        // Já fez onboarding, force to app
+        router.replace('/(app)' as any);
+      }
     }
   }, [psicologo, isLoading, segments]);
 

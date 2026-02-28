@@ -10,12 +10,12 @@ WebBrowser.maybeCompleteAuthSession();
 export default function LoginScreen() {
     const { login } = useAuthStore();
     const [isAuthenticating, setIsAuthenticating] = useState(false);
+    const [selectedRole, setSelectedRole] = useState<'psicologo' | 'paciente' | null>(null);
 
     // DEV BYPASS CONFIGURATION
     const __DEV_MODE__ = true;
 
     // Configure Google Auth Request
-    // TODO: Em produção, você deverá configurar as client IDs reais (iOS, Android, Web) no Google Cloud Console
     const [request, response, promptAsync] = Google.useAuthRequest({
         webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || 'dummy_web_client_id.apps.googleusercontent.com',
         iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || 'dummy_ios_client_id.apps.googleusercontent.com',
@@ -38,17 +38,9 @@ export default function LoginScreen() {
     const handleGoogleSignIn = async (idToken: string) => {
         setIsAuthenticating(true);
         try {
-            // 1. Enviar o id_token para nossa API backend
             const res = await api.post('/auth/google', { id_token: idToken });
-
-            // 2. Extrair o access_token (JWT próprio da plataforma Cori)
             const { access_token } = res.data;
-
-            // 3. Salvar no SecureStore, atualizar o axios e popular o estado global
             await login(access_token);
-
-            // Quando global.login termina, o roteador condicional no _layout.tsx será acionado automaticamente 
-            // removendo a AuthStack e renderizando a AppStack. Nenhuma navegação explícita é necessária aqui.
         } catch (error) {
             console.error('Falha no login com backend:', error);
             Alert.alert('Erro', 'Não foi possível completar o login nos servidores Cori. Tente novamente mais tarde.');
@@ -56,10 +48,14 @@ export default function LoginScreen() {
         }
     };
 
-    const handleDevBypass = async () => {
+    const handleDevBypass = async (type: 'new' | 'established') => {
         setIsAuthenticating(true);
         try {
-            await login('mock_dev_token_123');
+            if (type === 'new') {
+                await useAuthStore.getState().devLoginNewUser();
+            } else {
+                await useAuthStore.getState().devLoginEstablished();
+            }
         } catch (error) {
             Alert.alert("Erro", "Falha no modo Dev Bypass.");
             setIsAuthenticating(false);
@@ -70,38 +66,73 @@ export default function LoginScreen() {
         <View style={styles.container}>
             <View style={styles.brandContainer}>
                 <Text style={styles.title}>Cori</Text>
-                <Text style={styles.subtitle}>Gestão Inteligente para Psicólogos</Text>
+                <Text style={styles.subtitle}>Gestão Inteligente em Psicologia</Text>
             </View>
 
-            <View style={styles.buttonContainer}>
-                <TouchableOpacity
-                    style={styles.googleButton}
-                    onPress={() => promptAsync()}
-                    disabled={!request || isAuthenticating}
-                >
-                    {isAuthenticating ? (
-                        <ActivityIndicator color="#333" />
-                    ) : (
-                        <>
-                            {/* Espaço para o ícone do Google. Usando texto G provisional. */}
-                            <View style={styles.googleIconPlaceholder}>
-                                <Text style={styles.gText}>G</Text>
-                            </View>
-                            <Text style={styles.googleButtonText}>Entrar com Google</Text>
-                        </>
-                    )}
-                </TouchableOpacity>
-
-                {__DEV_MODE__ && (
+            {selectedRole === null ? (
+                <View style={styles.buttonContainer}>
                     <TouchableOpacity
-                        style={styles.devButton}
-                        onPress={handleDevBypass}
+                        style={styles.roleButton}
+                        onPress={() => setSelectedRole('psicologo')}
+                    >
+                        <Text style={styles.roleButtonText}>Sou Psicólogo</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.roleButton, styles.roleButtonSecondary]}
+                        onPress={() => Alert.alert("Em Breve", "O aplicativo para pacientes estará disponível em breve.")}
+                    >
+                        <Text style={[styles.roleButtonText, styles.roleButtonTextSecondary]}>Sou Paciente</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : (
+                <View style={styles.buttonContainer}>
+                    <TouchableOpacity
+                        style={styles.googleButton}
+                        onPress={() => promptAsync()}
+                        disabled={!request || isAuthenticating}
+                    >
+                        {isAuthenticating ? (
+                            <ActivityIndicator color="#333" />
+                        ) : (
+                            <>
+                                <View style={styles.googleIconPlaceholder}>
+                                    <Text style={styles.gText}>G</Text>
+                                </View>
+                                <Text style={styles.googleButtonText}>Entrar com Google</Text>
+                            </>
+                        )}
+                    </TouchableOpacity>
+
+                    {__DEV_MODE__ && (
+                        <View style={styles.devOptionsContainer}>
+                            <TouchableOpacity
+                                style={styles.devButton}
+                                onPress={() => handleDevBypass('new')}
+                                disabled={isAuthenticating}
+                            >
+                                <Text style={styles.devButtonText}>Mock: Psicólogo (Novo/Onboarding)</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.devButton}
+                                onPress={() => handleDevBypass('established')}
+                                disabled={isAuthenticating}
+                            >
+                                <Text style={styles.devButtonText}>Mock: Psicólogo (Veterano/Pronto)</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )}
+
+                    <TouchableOpacity
+                        style={styles.backButton}
+                        onPress={() => setSelectedRole(null)}
                         disabled={isAuthenticating}
                     >
-                        <Text style={styles.devButtonText}>Entrar no Modo Dev (Bypass)</Text>
+                        <Text style={styles.backButtonText}>Voltar</Text>
                     </TouchableOpacity>
-                )}
-            </View>
+                </View>
+            )}
         </View>
     );
 }
@@ -134,6 +165,36 @@ const styles = StyleSheet.create({
         width: '100%',
         alignItems: 'center',
     },
+    roleButton: {
+        backgroundColor: '#2C3E50',
+        paddingVertical: 16,
+        paddingHorizontal: 24,
+        borderRadius: 12,
+        width: '100%',
+        maxWidth: 320,
+        alignItems: 'center',
+        marginBottom: 16,
+        shadowColor: '#2C3E50',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    roleButtonSecondary: {
+        backgroundColor: 'transparent',
+        borderWidth: 1,
+        borderColor: '#BDC3C7',
+        shadowOpacity: 0,
+        elevation: 0,
+    },
+    roleButtonText: {
+        fontFamily: 'Cori-Bold',
+        fontSize: 18,
+        color: '#FFFFFF',
+    },
+    roleButtonTextSecondary: {
+        color: '#7F8C8D',
+    },
     googleButton: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -152,6 +213,7 @@ const styles = StyleSheet.create({
         width: '100%',
         maxWidth: 320,
         height: 56,
+        marginBottom: 16,
     },
     googleIconPlaceholder: {
         width: 24,
@@ -172,14 +234,33 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: '#333333',
     },
-    devButton: {
+    devOptionsContainer: {
         marginTop: 24,
-        padding: 8,
+        alignItems: 'center',
+        backgroundColor: '#F8F9FA',
+        padding: 16,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#EFEFEF',
+        width: '100%',
+        maxWidth: 320,
+    },
+    devButton: {
+        paddingVertical: 8,
     },
     devButtonText: {
         fontFamily: 'Cori-Medium',
         fontSize: 14,
-        color: '#BDC3C7',
+        color: '#95A5A6',
         textDecorationLine: 'underline',
+    },
+    backButton: {
+        marginTop: 32,
+        padding: 12,
+    },
+    backButtonText: {
+        fontFamily: 'Cori-Medium',
+        fontSize: 15,
+        color: '#7F8C8D',
     }
 });

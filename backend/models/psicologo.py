@@ -1,7 +1,7 @@
 import secrets
 import string
 from datetime import datetime
-from sqlalchemy import String, DateTime, func
+from sqlalchemy import String, DateTime, func, Boolean, Integer, Numeric, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 from backend.core.database import Base
 
@@ -38,6 +38,19 @@ class Psicologo(Base):
     dispositivo_push_token: Mapped[str | None] = mapped_column(
         String(256), nullable=True
     )
+
+    # Configurações do Onboarding (App)
+    onboarding_concluido: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    crp: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    duracao_sessao_padrao_minutos: Mapped[int] = mapped_column(Integer, default=50, server_default="50")
+    intervalo_sessao_padrao_minutos: Mapped[int] = mapped_column(Integer, default=10, server_default="10")
+    dias_atendimento: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    modelo_cobranca_padrao: Mapped[str] = mapped_column(String(50), default="por_sessao", server_default="por_sessao") # Opções: por_sessao, pacote_mensal_pos, pacote_mensal_pre
+    valor_sessao_padrao: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    chave_pix: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    enviar_lembretes_automaticos: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    antecedencia_lembrete_horas: Mapped[int] = mapped_column(Integer, default=24, server_default="24")
+    cobrar_faltas_nao_avisadas: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
     data_criacao: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False,

@@ -9,6 +9,8 @@ interface AuthState {
     login: (token: string) => Promise<void>;
     logout: () => Promise<void>;
     checkAuth: () => Promise<void>;
+    devLoginNewUser: () => Promise<void>;
+    devLoginEstablished: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>()((set) => ({
@@ -52,4 +54,58 @@ export const useAuthStore = create<AuthState>()((set) => ({
             set({ psicologo: null, isLoading: false });
         }
     },
+
+    // ==========================================
+    // DEV BYPASS: Facilitadores para Desenvolvimento
+    // ==========================================
+    devLoginNewUser: async () => {
+        set({
+            isLoading: false,
+            psicologo: {
+                id: 9991,
+                email: 'novo@cori.app',
+                nome_exibicao: 'Dr. Novo Usuário',
+                foto_perfil_url: null,
+                slug_link_publico: 'novo-dr',
+                dispositivo_push_token: null,
+                onboarding_concluido: false,
+                crp: null,
+                duracao_sessao_padrao_minutos: 50,
+                intervalo_sessao_padrao_minutos: 10,
+                dias_atendimento: null,
+                modelo_cobranca_padrao: 'por_sessao',
+                valor_sessao_padrao: null,
+                chave_pix: null,
+                enviar_lembretes_automaticos: true,
+                antecedencia_lembrete_horas: 24,
+                cobrar_faltas_nao_avisadas: false,
+            }
+        });
+    },
+
+    devLoginEstablished: async () => {
+        set({
+            isLoading: false,
+            psicologo: {
+                id: 9992,
+                email: 'veterano@cori.app',
+                nome_exibicao: 'Dra. Veterana',
+                foto_perfil_url: null,
+                slug_link_publico: 'vet-dra',
+                dispositivo_push_token: null,
+                onboarding_concluido: true,
+                crp: '06/123456',
+                duracao_sessao_padrao_minutos: 50,
+                intervalo_sessao_padrao_minutos: 10,
+                dias_atendimento: ['Seg', 'Ter', 'Qua'],
+                modelo_cobranca_padrao: 'pacote_mensal_pos',
+                valor_sessao_padrao: 150.0,
+                chave_pix: 'pix@cori.app',
+                enviar_lembretes_automaticos: true,
+                antecedencia_lembrete_horas: 24,
+                cobrar_faltas_nao_avisadas: false,
+            }
+        });
+    }
 }));
+

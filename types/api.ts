@@ -5,6 +5,19 @@ export interface Psicologo {
     foto_perfil_url: string | null;
     slug_link_publico: string | null;
     dispositivo_push_token: string | null;
+
+    // Onboarding config
+    onboarding_concluido: boolean;
+    crp: string | null;
+    duracao_sessao_padrao_minutos: number;
+    intervalo_sessao_padrao_minutos: number;
+    dias_atendimento: string[] | null;
+    modelo_cobranca_padrao: string;
+    valor_sessao_padrao: number | null;
+    chave_pix: string | null;
+    enviar_lembretes_automaticos: boolean;
+    antecedencia_lembrete_horas: number;
+    cobrar_faltas_nao_avisadas: boolean;
 }
 
 export interface ApiError {
