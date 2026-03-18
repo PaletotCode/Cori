@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:17.6
+    container_name: cori-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cori}
+      POSTGRES_USER: ${POSTGRES_USER:-cori}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cori}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cori} -d ${POSTGRES_DB:-cori}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: cori-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: cori-api
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cori}:${POSTGRES_PASSWORD:-cori}@postgres:5432/${POSTGRES_DB:-cori}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-20}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-env}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXP_MINUTES: ${ACCESS_TOKEN_EXP_MINUTES:-30}
+      REFRESH_TOKEN_EXP_DAYS: ${REFRESH_TOKEN_EXP_DAYS:-15}
+      PATIENT_INVITE_BASE_URL: ${PATIENT_INVITE_BASE_URL:-http://localhost:8081/paciente/convite}
+    env_file:
+      - ../.env
+      - ../backend/.env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: cori-worker
+    command: ["python", "-m", "app.worker.main"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cori}:${POSTGRES_PASSWORD:-cori}@postgres:5432/${POSTGRES_DB:-cori}
+      REDIS_URL: redis://redis:6379/0
+      WORKER_HEARTBEAT_SECONDS: ${WORKER_HEARTBEAT_SECONDS:-20}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-me-in-env}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXP_MINUTES: ${ACCESS_TOKEN_EXP_MINUTES:-30}
+      REFRESH_TOKEN_EXP_DAYS: ${REFRESH_TOKEN_EXP_DAYS:-15}
+      PATIENT_INVITE_BASE_URL: ${PATIENT_INVITE_BASE_URL:-http://localhost:8081/paciente/convite}
+    env_file:
+      - ../.env
+      - ../backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
