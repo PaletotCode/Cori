@@ -498,70 +498,57 @@ function KpiStackDeck({
   comparisonError,
   onOpenPreferences,
 }: KpiStackDeckProps) {
+  const MAX_DRAG_DX = 120;
+  const DRAG_TO_CARD_X_DIVISOR = 10;
+  const FRONT_EXIT_X = 84;
   const [frontCardIndex, setFrontCardIndex] = useState<0 | 1>(0);
   const [swapDirection, setSwapDirection] = useState<-1 | 1>(-1);
-  const [interactionState, setInteractionState] = useState<
-    "idle" | "tracking" | "settling" | "swapping"
-  >("idle");
   const frontExitMotion = useRef(new Animated.Value(0)).current;
   const backEnterMotion = useRef(new Animated.Value(0)).current;
   const dragMotion = useRef(new Animated.Value(0)).current;
-  const dragProgressMotion = useRef(new Animated.Value(0)).current;
   const isAnimatingRef = useRef(false);
   const isDraggingRef = useRef(false);
 
   const triggerSwap = useCallback(
-    (direction: -1 | 1) => {
+    (direction: -1 | 1, dragDxAtRelease = 0) => {
       if (isAnimatingRef.current) {
         return;
       }
 
       isAnimatingRef.current = true;
       isDraggingRef.current = false;
-      setInteractionState("swapping");
       setSwapDirection(direction);
+
+      const clampedDragDx = Math.max(-MAX_DRAG_DX, Math.min(MAX_DRAG_DX, dragDxAtRelease));
+      const releaseCardOffsetX = clampedDragDx / DRAG_TO_CARD_X_DIVISOR;
+      const startProgress = Math.min(0.32, Math.abs(releaseCardOffsetX) / FRONT_EXIT_X);
+      const frontExitDuration = Math.max(120, Math.round(260 * (1 - startProgress)));
 
       frontExitMotion.stopAnimation();
       backEnterMotion.stopAnimation();
       dragMotion.stopAnimation();
-      dragProgressMotion.stopAnimation();
-      frontExitMotion.setValue(0);
+      dragMotion.setValue(0);
+      frontExitMotion.setValue(startProgress);
       backEnterMotion.setValue(0);
 
-      Animated.parallel([
-        Animated.timing(dragMotion, {
-          toValue: 0,
-          duration: 120,
+      Animated.sequence([
+        Animated.timing(frontExitMotion, {
+          toValue: 1,
+          duration: frontExitDuration,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(backEnterMotion, {
+          toValue: 1,
+          duration: 280,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: true,
         }),
-        Animated.timing(dragProgressMotion, {
-          toValue: 0,
-          duration: 120,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.sequence([
-          Animated.timing(frontExitMotion, {
-            toValue: 1,
-            duration: 260,
-            easing: Easing.in(Easing.cubic),
-            useNativeDriver: true,
-          }),
-          Animated.timing(backEnterMotion, {
-            toValue: 1,
-            duration: 280,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }),
-        ]),
       ]).start(({ finished }) => {
         frontExitMotion.setValue(0);
         backEnterMotion.setValue(0);
         dragMotion.setValue(0);
-        dragProgressMotion.setValue(0);
         isAnimatingRef.current = false;
-        setInteractionState("idle");
 
         if (!finished) {
           return;
@@ -570,7 +557,14 @@ function KpiStackDeck({
         setFrontCardIndex((current) => (current === 0 ? 1 : 0));
       });
     },
-    [backEnterMotion, dragMotion, dragProgressMotion, frontExitMotion],
+    [
+      FRONT_EXIT_X,
+      MAX_DRAG_DX,
+      DRAG_TO_CARD_X_DIVISOR,
+      backEnterMotion,
+      dragMotion,
+      frontExitMotion,
+    ],
   );
 
   useEffect(() => {
@@ -599,9 +593,7 @@ function KpiStackDeck({
             return;
           }
           isDraggingRef.current = true;
-          setInteractionState("tracking");
           dragMotion.stopAnimation();
-          dragProgressMotion.stopAnimation();
           frontExitMotion.stopAnimation();
           backEnterMotion.stopAnimation();
         },
@@ -609,9 +601,8 @@ function KpiStackDeck({
           if (!isDraggingRef.current || isAnimatingRef.current) {
             return;
           }
-          const clampedDx = Math.max(-120, Math.min(120, gestureState.dx));
+          const clampedDx = Math.max(-MAX_DRAG_DX, Math.min(MAX_DRAG_DX, gestureState.dx));
           dragMotion.setValue(clampedDx);
-          dragProgressMotion.setValue(Math.min(1, Math.abs(clampedDx) / 120));
         },
         onPanResponderRelease: (_, gestureState) => {
           isDraggingRef.current = false;
@@ -623,59 +614,35 @@ function KpiStackDeck({
           const shouldGoBack = gestureState.dx > 44 || gestureState.vx > 0.38;
 
           if (shouldGoForward) {
-            triggerSwap(-1);
+            triggerSwap(-1, gestureState.dx);
             return;
           }
           if (shouldGoBack) {
-            triggerSwap(1);
+            triggerSwap(1, gestureState.dx);
             return;
           }
 
-          setInteractionState("settling");
-          Animated.parallel([
-            Animated.spring(dragMotion, {
-              toValue: 0,
-              damping: 18,
-              stiffness: 220,
-              mass: 0.8,
-              useNativeDriver: true,
-            }),
-            Animated.spring(dragProgressMotion, {
-              toValue: 0,
-              damping: 18,
-              stiffness: 220,
-              mass: 0.8,
-              useNativeDriver: true,
-            }),
-          ]).start(() => {
-            setInteractionState("idle");
-          });
+          Animated.spring(dragMotion, {
+            toValue: 0,
+            damping: 18,
+            stiffness: 220,
+            mass: 0.8,
+            useNativeDriver: true,
+          }).start();
         },
         onPanResponderTerminate: () => {
           isDraggingRef.current = false;
-          setInteractionState("settling");
-          Animated.parallel([
-            Animated.spring(dragMotion, {
-              toValue: 0,
-              damping: 18,
-              stiffness: 220,
-              mass: 0.8,
-              useNativeDriver: true,
-            }),
-            Animated.spring(dragProgressMotion, {
-              toValue: 0,
-              damping: 18,
-              stiffness: 220,
-              mass: 0.8,
-              useNativeDriver: true,
-            }),
-          ]).start(() => {
-            setInteractionState("idle");
-          });
+          Animated.spring(dragMotion, {
+            toValue: 0,
+            damping: 18,
+            stiffness: 220,
+            mass: 0.8,
+            useNativeDriver: true,
+          }).start();
         },
         onPanResponderTerminationRequest: () => true,
       }),
-    [backEnterMotion, dragMotion, dragProgressMotion, frontExitMotion, triggerSwap],
+    [MAX_DRAG_DX, backEnterMotion, dragMotion, frontExitMotion, triggerSwap],
   );
 
   const frontDefinition = frontCardIndex === 0 ? primaryDefinition : secondaryDefinition;
@@ -689,7 +656,7 @@ function KpiStackDeck({
         translateX: Animated.add(
           dragMotion.interpolate({
             inputRange: [-120, 0, 120],
-            outputRange: [-22, 0, 22],
+            outputRange: [-12, 0, 12],
             extrapolate: "clamp",
           }),
           frontExitMotion.interpolate({
@@ -699,34 +666,15 @@ function KpiStackDeck({
         ),
       },
       {
-        translateY: Animated.add(
-          frontExitMotion.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, -7],
-          }),
-          dragProgressMotion.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, -3],
-          }),
-        ),
+        translateY: frontExitMotion.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, -7],
+        }),
       },
       {
-        scale: Animated.subtract(
-          frontExitMotion.interpolate({
-            inputRange: [0, 1],
-            outputRange: [1, 0.925],
-          }),
-          dragProgressMotion.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, 0.028],
-          }),
-        ),
-      },
-      {
-        rotateZ: dragMotion.interpolate({
-          inputRange: [-120, 0, 120],
-          outputRange: ["-2.8deg", "0deg", "2.8deg"],
-          extrapolate: "clamp",
+        scale: frontExitMotion.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, 0.925],
         }),
       },
       {
@@ -748,7 +696,7 @@ function KpiStackDeck({
         translateX: Animated.add(
           dragMotion.interpolate({
             inputRange: [-120, 0, 120],
-            outputRange: [-9, 0, 9],
+            outputRange: [-4, 0, 4],
             extrapolate: "clamp",
           }),
           backEnterMotion.interpolate({
@@ -758,28 +706,16 @@ function KpiStackDeck({
         ),
       },
       {
-        translateY: Animated.subtract(
-          backEnterMotion.interpolate({
-            inputRange: [0, 1],
-            outputRange: [4, 0],
-          }),
-          dragProgressMotion.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, 3],
-          }),
-        ),
+        translateY: backEnterMotion.interpolate({
+          inputRange: [0, 1],
+          outputRange: [4, 0],
+        }),
       },
       {
-        scale: Animated.add(
-          backEnterMotion.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.945, 1],
-          }),
-          dragProgressMotion.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, 0.018],
-          }),
-        ),
+        scale: backEnterMotion.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.945, 1],
+        }),
       },
       {
         rotateZ: backEnterMotion.interpolate({
@@ -793,10 +729,6 @@ function KpiStackDeck({
   const backMaskOpacity = backEnterMotion.interpolate({
     inputRange: [0, 1],
     outputRange: [0.84, 0],
-  });
-  const backMaskDuringDrag = dragProgressMotion.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.84, 0.5],
   });
 
   return (
@@ -829,12 +761,7 @@ function KpiStackDeck({
         />
         <Animated.View
           pointerEvents="none"
-          style={[
-            styles.kpiDeckBackContentMask,
-            {
-              opacity: interactionState === "swapping" ? backMaskOpacity : backMaskDuringDrag,
-            },
-          ]}
+          style={[styles.kpiDeckBackContentMask, { opacity: backMaskOpacity }]}
         />
       </Animated.View>
     </View>
