@@ -12,6 +12,11 @@ export type AgendaAssignMode = "session" | "activity" | "form";
 
 export type AgendaAssignFlowStatus = "idle" | "loading" | "success" | "error";
 
+export interface AgendaAssignResult {
+  ok: boolean;
+  message: string;
+}
+
 export interface AssignSessionDraft {
   patientId: string;
   dateKey: string;
@@ -28,9 +33,8 @@ export interface AssignActivityDraft {
   scheduledTime: string;
   dueDateKey: string;
   dueTime: string;
-  overrideTitle: string;
-  overrideDescription: string;
-  overrideInstructions: string;
+  skipDueDate: boolean;
+  additionalNote: string;
 }
 
 export interface AssignFormDraft {
@@ -39,8 +43,7 @@ export interface AssignFormDraft {
   sendMode: FormTemplateSendMode;
   scheduledDateKey: string;
   scheduledTime: string;
-  overrideTitle: string;
-  overrideSubtitle: string;
+  additionalNote: string;
 }
 
 export interface AgendaAssignSheetProps {
@@ -53,9 +56,9 @@ export interface AgendaAssignSheetProps {
   flowStatusByMode: Record<AgendaAssignMode, AgendaAssignFlowStatus>;
   errorMessageByMode: Partial<Record<AgendaAssignMode, string | null>>;
   onClose: () => void;
-  onAssignSession: (draft: AssignSessionDraft) => Promise<void>;
-  onAssignActivity: (draft: AssignActivityDraft) => Promise<void>;
-  onAssignForm: (draft: AssignFormDraft) => Promise<void>;
+  onAssignSession: (draft: AssignSessionDraft) => Promise<AgendaAssignResult>;
+  onAssignActivity: (draft: AssignActivityDraft) => Promise<AgendaAssignResult>;
+  onAssignForm: (draft: AssignFormDraft) => Promise<AgendaAssignResult>;
   onOpenActivitiesTemplates: () => void;
   onOpenFormTemplates: () => void;
 }

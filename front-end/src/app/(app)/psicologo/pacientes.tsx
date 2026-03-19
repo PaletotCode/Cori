@@ -3,7 +3,6 @@ import { Redirect } from "expo-router";
 import { useAuthStore } from "../../../features/auth/hooks/useAuthStore";
 import { resolvePsychologistPatientsRedirect } from "../../../features/navigation/guards";
 import { PsychologistPatientsScreen } from "../../../features/patients/screens/PsychologistPatientsScreen";
-import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
 
 export default function PsychologistPatientsRoute() {
   const hydrated = useAuthStore((state) => state.hydrated);
@@ -20,9 +19,5 @@ export default function PsychologistPatientsRoute() {
     return <Redirect href={redirect} />;
   }
 
-  return (
-    <ScreenFadeIn>
-      <PsychologistPatientsScreen />
-    </ScreenFadeIn>
-  );
+  return <PsychologistPatientsScreen />;
 }

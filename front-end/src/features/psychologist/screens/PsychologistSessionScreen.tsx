@@ -120,7 +120,10 @@ function createDefaultPreferences(): Record<KpiCardId, CardPreferences> {
 }
 
 function toReferenceDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function addDays(date: Date, amount: number): Date {
@@ -847,9 +850,12 @@ export function PsychologistSessionScreen() {
     setComparisonError(null);
 
     try {
-      const [today, week, activities, profileData] = await Promise.all([
+      const [today, week] = await Promise.all([
         sessionsApiClient.listAgenda(accessToken, { view: "day", referenceDate }),
         sessionsApiClient.listAgenda(accessToken, { view: "week", referenceDate }),
+      ]);
+
+      const [activitiesResult, profileResult] = await Promise.allSettled([
         activitiesApiClient.listActivities(accessToken, { limit: 200 }),
         practiceProfileApiClient.get(accessToken).catch((error) => {
           if (error instanceof PracticeProfileApiError && error.statusCode === 404) {
@@ -866,8 +872,10 @@ export function PsychologistSessionScreen() {
         ),
       );
       setWeekSessions(week);
-      setActivityItems(activities);
-      setSessionPriceCents(profileData?.sessionPriceCents ?? null);
+      setActivityItems(activitiesResult.status === "fulfilled" ? activitiesResult.value : []);
+      setSessionPriceCents(
+        profileResult.status === "fulfilled" ? (profileResult.value?.sessionPriceCents ?? null) : null,
+      );
       setHasLoadedSummary(true);
 
       try {
@@ -924,6 +932,18 @@ export function PsychologistSessionScreen() {
   useEffect(() => {
     void loadSummary();
   }, [loadSummary]);
+
+  useEffect(() => {
+    if (accessToken === null) {
+      return;
+    }
+    const intervalId = setInterval(() => {
+      void loadSummary();
+    }, 45000);
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [accessToken, loadSummary]);
 
   const todayCount = countNonCanceledSessions(todaySessions);
   const todayPending = countPendingSessions(todaySessions);

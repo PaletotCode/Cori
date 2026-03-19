@@ -201,17 +201,6 @@ export default function ProtectedLayout() {
         }}
       />
       <Tabs.Screen
-        name="psicologo/timeline"
-        options={{
-          title: "Timeline e Notificacoes",
-          tabBarLabel: "Timeline",
-          tabBarActiveTintColor: "#C026D3",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} name="time-outline" accentColor="#C026D3" />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="psicologo/triagens"
         options={{
           title: "Triagens e Convites",

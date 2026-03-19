@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { typographyContract } from "../../../../shared/ui/typography";
@@ -22,6 +22,8 @@ interface AgendaMonthViewProps {
   onSelectDate: (dateKey: string) => void;
 }
 
+const LIST_PAGE_SIZE = 10;
+
 function AgendaMonthViewComponent({
   monthDate,
   mode,
@@ -40,7 +42,29 @@ function AgendaMonthViewComponent({
     return splitIntoWeeks(buildMonthMatrix(addMonths(monthDate, 1))).slice(0, 2);
   }, [mode, monthDate]);
 
-  const selectedDateEvents = eventsByDate.get(selectedDateKey) ?? [];
+  const selectedDateEvents = useMemo(
+    () => eventsByDate.get(selectedDateKey) ?? [],
+    [eventsByDate, selectedDateKey],
+  );
+  const [listPage, setListPage] = useState(1);
+
+  useEffect(() => {
+    setListPage(1);
+  }, [selectedDateKey, mode]);
+
+  const listTotalPages = Math.max(1, Math.ceil(selectedDateEvents.length / LIST_PAGE_SIZE));
+  const normalizedListPage = Math.min(listPage, listTotalPages);
+
+  useEffect(() => {
+    if (normalizedListPage !== listPage) {
+      setListPage(normalizedListPage);
+    }
+  }, [listPage, normalizedListPage]);
+
+  const pagedDateEvents = useMemo(() => {
+    const start = (normalizedListPage - 1) * LIST_PAGE_SIZE;
+    return selectedDateEvents.slice(start, start + LIST_PAGE_SIZE);
+  }, [normalizedListPage, selectedDateEvents]);
 
   return (
     <View style={styles.container}>
@@ -146,19 +170,57 @@ function AgendaMonthViewComponent({
           {selectedDateEvents.length === 0 ? (
             <Text style={styles.emptyListText}>Nenhum compromisso para este dia.</Text>
           ) : (
-            selectedDateEvents.map((event) => (
-              <View key={`list-${event.id}`} style={styles.listItem}>
-                <View style={[styles.listStripe, { backgroundColor: event.color }]} />
-                <View style={styles.listContent}>
-                  <Text numberOfLines={1} style={styles.listTitle}>
-                    {event.title}
-                  </Text>
-                  <Text style={styles.listMeta}>
-                    {toTimeLabel(event.startsAt)} - {toTimeLabel(event.endsAt)}
-                  </Text>
-                </View>
+            <>
+              <View style={styles.listItemsWrap}>
+                {pagedDateEvents.map((event) => (
+                  <View key={`list-${event.type}-${event.id}`} style={styles.listItemCard}>
+                    <View style={styles.listItem}>
+                      <View style={[styles.listStripe, { backgroundColor: event.color }]} />
+                      <View style={styles.listContent}>
+                        <Text numberOfLines={1} style={styles.listTitle}>
+                          {event.title}
+                        </Text>
+                        <Text style={styles.listMeta}>
+                          {toTimeLabel(event.startsAt)} - {toTimeLabel(event.endsAt)}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                ))}
               </View>
-            ))
+
+              {selectedDateEvents.length > LIST_PAGE_SIZE ? (
+                <View style={styles.paginationRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => setListPage((current) => Math.max(1, current - 1))}
+                    style={[
+                      styles.paginationButton,
+                      normalizedListPage <= 1 ? styles.paginationButtonDisabled : null,
+                    ]}
+                    disabled={normalizedListPage <= 1}
+                  >
+                    <Text style={styles.paginationButtonText}>Anterior</Text>
+                  </Pressable>
+                  <Text style={styles.paginationLabel}>
+                    Pagina {normalizedListPage} de {listTotalPages}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() =>
+                      setListPage((current) => Math.min(listTotalPages, current + 1))
+                    }
+                    style={[
+                      styles.paginationButton,
+                      normalizedListPage >= listTotalPages ? styles.paginationButtonDisabled : null,
+                    ]}
+                    disabled={normalizedListPage >= listTotalPages}
+                  >
+                    <Text style={styles.paginationButtonText}>Proxima</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </>
           )}
         </View>
       ) : null}
@@ -351,12 +413,19 @@ const styles = StyleSheet.create({
     fontWeight: typographyContract.fontWeight,
   },
   listSection: {
-    borderRadius: 20,
+    paddingTop: 2,
+    gap: 10,
+  },
+  listItemsWrap: {
+    gap: 8,
+  },
+  listItemCard: {
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: "#DFE4EC",
     backgroundColor: "#FFFFFF",
-    padding: 12,
-    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
   },
   emptyListText: {
     color: "#667085",
@@ -386,6 +455,42 @@ const styles = StyleSheet.create({
     fontWeight: typographyContract.fontWeight,
   },
   listMeta: {
+    color: "#667085",
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typographyContract.fontFamily,
+    fontWeight: typographyContract.fontWeight,
+  },
+  paginationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  paginationButton: {
+    minHeight: 30,
+    minWidth: 86,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  paginationButtonDisabled: {
+    opacity: 0.5,
+  },
+  paginationButtonText: {
+    color: "#344054",
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: typographyContract.fontFamily,
+    fontWeight: typographyContract.fontWeight,
+  },
+  paginationLabel: {
+    flex: 1,
+    textAlign: "center",
     color: "#667085",
     fontSize: 12,
     lineHeight: 16,

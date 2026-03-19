@@ -136,6 +136,13 @@ function createIdempotencyKey(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
+function resolveAsyncErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return fallbackMessage;
+}
+
 function upsertById<TItem extends { id: string }>(items: TItem[], nextItem: TItem): TItem[] {
   const index = items.findIndex((item) => item.id === nextItem.id);
   if (index < 0) {
@@ -437,8 +444,14 @@ export function PsychologistAgendaScreen({
     }
 
     lastHandledRealtimeNotificationIdRef.current = latestNotification.id;
-    void loadContextData();
-    void refreshMonthSessions(monthScopeFromDateKey(selectedDateKey));
+    void Promise.all([
+      loadContextData(),
+      refreshMonthSessions(monthScopeFromDateKey(selectedDateKey)),
+    ]).catch((requestError) => {
+      setErrorMessage(
+        resolveAsyncErrorMessage(requestError, "Falha ao sincronizar atualizacao em tempo real da agenda."),
+      );
+    });
   }, [latestNotification, loadContextData, refreshMonthSessions, selectedDateKey]);
 
   const sessionEvents = useMemo<AgendaCalendarEvent[]>(() => {
@@ -585,21 +598,24 @@ export function PsychologistAgendaScreen({
     setErrorMessage(null);
     setFlowStatusByMode(INITIAL_FLOW_STATUS);
     setFlowErrorsByMode(INITIAL_FLOW_ERRORS);
+    void loadContextData();
     void loadAssignTemplates();
-  }, [loadAssignTemplates]);
+  }, [loadAssignTemplates, loadContextData]);
 
   const handleAssignSession = useCallback(
     async (draft: AssignSessionDraft) => {
       if (accessToken === null) {
-        updateFlowState("session", "error", "Sessao expirada. Entre novamente.");
-        return;
+        const message = "Sessao expirada. Entre novamente.";
+        updateFlowState("session", "error", message);
+        return { ok: false, message };
       }
 
       const startAt = combineDateAndTime(draft.dateKey, draft.startTime);
       const endAt = combineDateAndTime(draft.dateKey, draft.endTime);
       if (startAt === null || endAt === null) {
-        updateFlowState("session", "error", "Formato de data/horario invalido para a sessao.");
-        return;
+        const message = "Formato de data/horario invalido para a sessao.";
+        updateFlowState("session", "error", message);
+        return { ok: false, message };
       }
 
       updateFlowState("session", "loading");
@@ -614,20 +630,29 @@ export function PsychologistAgendaScreen({
         });
 
         setSessionsByMonth((current) => upsertSessionIntoMonth(current, createdSession));
-        setCreateSheetVisible(false);
         updateFlowState("session", "success");
-        setInfoMessage("Sessao atribuida com sucesso.");
+        const message = "Sessao atribuida com sucesso.";
+        setInfoMessage(message);
 
         void Promise.all([
           refreshMonthSessions(monthScopeFromDateKey(draft.dateKey)),
           loadContextData(),
-        ]);
+        ]).catch((requestError) => {
+          setErrorMessage(
+            resolveAsyncErrorMessage(requestError, "Falha ao sincronizar dados apos atribuir sessao."),
+          );
+        });
+
+        return { ok: true, message };
       } catch (requestError) {
+        const message =
+          requestError instanceof Error ? requestError.message : "Falha ao atribuir sessao na agenda.";
         updateFlowState(
           "session",
           "error",
-          requestError instanceof Error ? requestError.message : "Falha ao atribuir sessao na agenda.",
+          message,
         );
+        return { ok: false, message };
       } finally {
         setFlowStatusByMode((current) => ({
           ...current,
@@ -641,14 +666,20 @@ export function PsychologistAgendaScreen({
   const handleAssignActivity = useCallback(
     async (draft: AssignActivityDraft) => {
       if (accessToken === null) {
-        updateFlowState("activity", "error", "Sessao expirada. Entre novamente.");
-        return;
+        const message = "Sessao expirada. Entre novamente.";
+        updateFlowState("activity", "error", message);
+        return { ok: false, message };
       }
 
-      const dueAt = combineDateAndTime(draft.dueDateKey, draft.dueTime);
+      const computedDueAt =
+        draft.skipDueDate === true
+          ? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+          : combineDateAndTime(draft.dueDateKey, draft.dueTime);
+      const dueAt = computedDueAt;
       if (dueAt === null) {
-        updateFlowState("activity", "error", "Prazo invalido para atribuicao da atividade.");
-        return;
+        const message = "Prazo invalido para atribuicao da atividade.";
+        updateFlowState("activity", "error", message);
+        return { ok: false, message };
       }
 
       const scheduledSendAt =
@@ -656,13 +687,12 @@ export function PsychologistAgendaScreen({
           ? combineDateAndTime(draft.scheduledDateKey, draft.scheduledTime)
           : undefined;
       if (draft.sendMode === "scheduled" && scheduledSendAt === null) {
-        updateFlowState("activity", "error", "Envio agendado invalido para atividade.");
-        return;
+        const message = "Envio agendado invalido para atividade.";
+        updateFlowState("activity", "error", message);
+        return { ok: false, message };
       }
 
-      const overrideTitle = draft.overrideTitle.trim();
-      const overrideDescription = draft.overrideDescription.trim();
-      const overrideInstructions = draft.overrideInstructions.trim();
+      const additionalNote = draft.additionalNote.trim();
 
       updateFlowState("activity", "loading");
       setInfoMessage(null);
@@ -676,13 +706,9 @@ export function PsychologistAgendaScreen({
             dueAt,
             scheduledSendAt: scheduledSendAt ?? undefined,
             overrides:
-              overrideTitle.length > 0 ||
-              overrideDescription.length > 0 ||
-              overrideInstructions.length > 0
+              additionalNote.length > 0
                 ? {
-                    title: overrideTitle.length > 0 ? overrideTitle : undefined,
-                    description: overrideDescription.length > 0 ? overrideDescription : undefined,
-                    instructions: overrideInstructions.length > 0 ? overrideInstructions : undefined,
+                    instructions: additionalNote,
                   }
                 : undefined,
           },
@@ -690,26 +716,38 @@ export function PsychologistAgendaScreen({
         );
 
         setActivities((current) => upsertById(current, mapActivityDetailToItem(result.activity)));
-        setCreateSheetVisible(false);
         updateFlowState("activity", "success");
-        setInfoMessage(
+        const message =
           draft.sendMode === "scheduled"
             ? "Atividade agendada para envio com sucesso."
-            : "Atividade atribuida com sucesso.",
-        );
+            : "Atividade atribuida com sucesso.";
+        setInfoMessage(message);
 
-        const monthsToRefresh = [draft.dueDateKey];
+        const dueDateKeyToRefresh =
+          draft.skipDueDate === true ? toDateKeyFromIso(dueAt) : draft.dueDateKey;
+        const monthsToRefresh = [dueDateKeyToRefresh];
         if (draft.sendMode === "scheduled") {
           monthsToRefresh.push(draft.scheduledDateKey);
         }
 
-        void Promise.all([refreshMonthsForDateKeys(monthsToRefresh), loadContextData()]);
+        void Promise.all([refreshMonthsForDateKeys(monthsToRefresh), loadContextData()]).catch(
+          (requestError) => {
+            setErrorMessage(
+              resolveAsyncErrorMessage(requestError, "Falha ao sincronizar dados apos atribuir atividade."),
+            );
+          },
+        );
+
+        return { ok: true, message };
       } catch (requestError) {
+        const message =
+          requestError instanceof Error ? requestError.message : "Falha ao atribuir atividade.";
         updateFlowState(
           "activity",
           "error",
-          requestError instanceof Error ? requestError.message : "Falha ao atribuir atividade.",
+          message,
         );
+        return { ok: false, message };
       } finally {
         setFlowStatusByMode((current) => ({
           ...current,
@@ -729,8 +767,9 @@ export function PsychologistAgendaScreen({
   const handleAssignForm = useCallback(
     async (draft: AssignFormDraft) => {
       if (accessToken === null) {
-        updateFlowState("form", "error", "Sessao expirada. Entre novamente.");
-        return;
+        const message = "Sessao expirada. Entre novamente.";
+        updateFlowState("form", "error", message);
+        return { ok: false, message };
       }
 
       const scheduledSendAt =
@@ -738,12 +777,12 @@ export function PsychologistAgendaScreen({
           ? combineDateAndTime(draft.scheduledDateKey, draft.scheduledTime)
           : undefined;
       if (draft.sendMode === "scheduled" && scheduledSendAt === null) {
-        updateFlowState("form", "error", "Envio agendado invalido para formulario.");
-        return;
+        const message = "Envio agendado invalido para formulario.";
+        updateFlowState("form", "error", message);
+        return { ok: false, message };
       }
 
-      const overrideTitle = draft.overrideTitle.trim();
-      const overrideSubtitle = draft.overrideSubtitle.trim();
+      const additionalNote = draft.additionalNote.trim();
 
       updateFlowState("form", "loading");
       setInfoMessage(null);
@@ -756,10 +795,9 @@ export function PsychologistAgendaScreen({
             sendMode: draft.sendMode,
             scheduledSendAt: scheduledSendAt ?? undefined,
             overrides:
-              overrideTitle.length > 0 || overrideSubtitle.length > 0
+              additionalNote.length > 0
                 ? {
-                    title: overrideTitle.length > 0 ? overrideTitle : undefined,
-                    subtitle: overrideSubtitle.length > 0 ? overrideSubtitle : undefined,
+                    subtitle: additionalNote,
                   }
                 : undefined,
           },
@@ -767,24 +805,34 @@ export function PsychologistAgendaScreen({
         );
 
         setForms((current) => upsertById(current, mapFormDetailToItem(result.form)));
-        setCreateSheetVisible(false);
         updateFlowState("form", "success");
-        setInfoMessage(
+        const message =
           draft.sendMode === "scheduled"
             ? "Formulario agendado para envio com sucesso."
-            : "Formulario atribuido com sucesso.",
-        );
+            : "Formulario atribuido com sucesso.";
+        setInfoMessage(message);
 
         const monthsToRefresh =
           draft.sendMode === "scheduled" ? [draft.scheduledDateKey] : [selectedDateKey];
 
-        void Promise.all([refreshMonthsForDateKeys(monthsToRefresh), loadContextData()]);
+        void Promise.all([refreshMonthsForDateKeys(monthsToRefresh), loadContextData()]).catch(
+          (requestError) => {
+            setErrorMessage(
+              resolveAsyncErrorMessage(requestError, "Falha ao sincronizar dados apos atribuir formulario."),
+            );
+          },
+        );
+
+        return { ok: true, message };
       } catch (requestError) {
+        const message =
+          requestError instanceof Error ? requestError.message : "Falha ao atribuir formulario.";
         updateFlowState(
           "form",
           "error",
-          requestError instanceof Error ? requestError.message : "Falha ao atribuir formulario.",
+          message,
         );
+        return { ok: false, message };
       } finally {
         setFlowStatusByMode((current) => ({
           ...current,

@@ -98,9 +98,8 @@ export function useAgendaAssignSheetState({
     scheduledTime: "08:00",
     dueDateKey: selectedDateKey,
     dueTime: "18:00",
-    overrideTitle: "",
-    overrideDescription: "",
-    overrideInstructions: "",
+    skipDueDate: false,
+    additionalNote: "",
   });
 
   const [formDraft, setFormDraft] = useState<AssignFormDraft>({
@@ -109,8 +108,7 @@ export function useAgendaAssignSheetState({
     sendMode: "immediate",
     scheduledDateKey: selectedDateKey,
     scheduledTime: "08:00",
-    overrideTitle: "",
-    overrideSubtitle: "",
+    additionalNote: "",
   });
 
   const [sessionErrors, setSessionErrors] = useState<SessionFieldErrors>({});
@@ -249,11 +247,13 @@ export function useAgendaAssignSheetState({
     if (activityDraft.patientId.length === 0) {
       nextErrors.patientId = "Selecione um paciente.";
     }
-    if (!isDateKeyValid(activityDraft.dueDateKey)) {
-      nextErrors.dueDateKey = "Data invalida para prazo.";
-    }
-    if (!isTimeValid(activityDraft.dueTime)) {
-      nextErrors.dueTime = "Hora invalida para prazo.";
+    if (!activityDraft.skipDueDate) {
+      if (!isDateKeyValid(activityDraft.dueDateKey)) {
+        nextErrors.dueDateKey = "Data invalida para prazo.";
+      }
+      if (!isTimeValid(activityDraft.dueTime)) {
+        nextErrors.dueTime = "Hora invalida para prazo.";
+      }
     }
     if (activityDraft.sendMode === "scheduled") {
       if (!isDateKeyValid(activityDraft.scheduledDateKey)) {
