@@ -1,11 +1,12 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "expo-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
-  Easing,
+  InteractionManager,
   Linking,
   Modal,
   Pressable,
@@ -18,7 +19,6 @@ import {
   useWindowDimensions,
 } from "react-native";
 
-import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
 import { shellStyles } from "../../../shared/ui/shellStyles";
 import { typographyContract } from "../../../shared/ui/typography";
 import {
@@ -52,7 +52,7 @@ import type {
   PatientListItem,
   PatientTimelineEvent,
 } from "../api/types";
-import { PatientContactCard } from "../components/PatientContactCard";
+import { PatientCard } from "../components/PatientCard";
 import {
   PatientTimelineFeed,
   type PatientTimelineFeedItem,
@@ -134,6 +134,53 @@ const TIMELINE_ACCENT_COLOR: Record<TimelineCategoryFilter, string> = {
   changes: "#B45309",
   payments: "#16A34A",
 };
+
+interface PatientsScreenCache {
+  patients: PatientListItem[];
+  patientDetailsById: Record<string, PatientDetail>;
+  hasLoadedList: boolean;
+}
+
+interface PatientCardListItem {
+  patient: PatientListItem;
+  summary: string;
+  ageLabel: string;
+  birthdayLabel: string;
+  whatsappDisabled: boolean;
+  callDisabled: boolean;
+}
+
+interface WorkspaceCollections {
+  activities: ActivityItem[];
+  forms: ClinicalFormListItem[];
+}
+
+const REQUEST_ABORTED_ERROR_NAME = "PatientsScreenRequestAborted";
+const SESSIONS_FETCH_BATCH_SIZE = 4;
+const EMPTY_COMBINED_TIMELINE: CombinedTimelineItem[] = [];
+const EMPTY_TIMELINE_FEED: PatientTimelineFeedItem[] = [];
+const DETAIL_WORKSPACE_LOAD_DEFER_MS =
+  process.env.PATIENTS_PERF_SIM === "1"
+    ? 230
+    : process.env.NODE_ENV === "test"
+      ? 0
+      : 230;
+
+let patientsScreenCache: PatientsScreenCache | null = null;
+
+export function __resetPatientsScreenCacheForTests(): void {
+  patientsScreenCache = null;
+}
+
+function createRequestAbortedError(): Error {
+  const error = new Error("Solicitacao interrompida.");
+  error.name = REQUEST_ABORTED_ERROR_NAME;
+  return error;
+}
+
+function isRequestAbortedError(error: unknown): boolean {
+  return error instanceof Error && error.name === REQUEST_ABORTED_ERROR_NAME;
+}
 
 function normalizeSearch(value: string): string {
   return value
@@ -293,6 +340,22 @@ function resolveBirthdayCountdownLabel(detail: PatientDetail | null): string {
   return `Proximo aniversario em ${days} dia${days === 1 ? "" : "s"}`;
 }
 
+function resolveCardAgeLabel(detail: PatientDetail | null): string {
+  const age = calculateAge(detail?.birthDate ?? null);
+  return age === null ? "S/idade" : `${age} anos`;
+}
+
+function resolveCardBirthdayLabel(detail: PatientDetail | null): string {
+  const days = daysUntilNextBirthday(detail?.birthDate ?? null);
+  if (days === null) {
+    return "S/niver";
+  }
+  if (days === 0) {
+    return "Niver hoje";
+  }
+  return `Niver ${days}d`;
+}
+
 function resolvePatientSearchBlob(patient: PatientListItem, detail: PatientDetail | null): string {
   const age = calculateAge(detail?.birthDate ?? null);
   const fields = [
@@ -346,8 +409,9 @@ async function loadPatientSessionsFromYearRange(params: {
   patientId: string;
   startYear: number;
   sessionsClient: SessionsApiClient;
+  signal?: AbortSignal;
 }): Promise<SessionAgendaItem[]> {
-  const { accessToken, patientId, sessionsClient, startYear } = params;
+  const { accessToken, patientId, sessionsClient, signal, startYear } = params;
   const now = new Date();
   const currentYear = now.getFullYear();
   const normalizedStartYear = Math.max(2000, Math.min(startYear, currentYear));
@@ -359,25 +423,37 @@ async function loadPatientSessionsFromYearRange(params: {
     }
   }
 
-  const monthResponses = await Promise.allSettled(
-    monthDates.map((monthDate) =>
-      sessionsClient.listAgenda(accessToken, {
-        view: "month",
-        referenceDate: toDateKey(monthDate),
-      }),
-    ),
-  );
-
   const byId = new Map<string, SessionAgendaItem>();
-  for (const response of monthResponses) {
-    if (response.status !== "fulfilled") {
-      continue;
+  for (let startIndex = 0; startIndex < monthDates.length; startIndex += SESSIONS_FETCH_BATCH_SIZE) {
+    if (signal?.aborted) {
+      throw createRequestAbortedError();
     }
-    for (const item of response.value) {
-      if (item.patientId !== patientId) {
+
+    const batch = monthDates.slice(startIndex, startIndex + SESSIONS_FETCH_BATCH_SIZE);
+    // 🚀 PERFORMANCE: limita concorrencia de meses para reduzir rajadas de parse JSON na JS Thread.
+    const batchResponses = await Promise.allSettled(
+      batch.map((monthDate) =>
+        sessionsClient.listAgenda(accessToken, {
+          view: "month",
+          referenceDate: toDateKey(monthDate),
+        }),
+      ),
+    );
+
+    if (signal?.aborted) {
+      throw createRequestAbortedError();
+    }
+
+    for (const response of batchResponses) {
+      if (response.status !== "fulfilled") {
         continue;
       }
-      byId.set(item.id, item);
+      for (const item of response.value) {
+        if (item.patientId !== patientId) {
+          continue;
+        }
+        byId.set(item.id, item);
+      }
     }
   }
 
@@ -385,6 +461,29 @@ async function loadPatientSessionsFromYearRange(params: {
     (left, right) =>
       new Date(right.scheduledStartAt).getTime() - new Date(left.scheduledStartAt).getTime(),
   );
+}
+
+function processWorkspaceCollections(
+  activities: ActivityItem[],
+  forms: ClinicalFormListItem[],
+  patientId: string,
+): WorkspaceCollections {
+  const filteredActivities = activities.filter((item) => item.patientId === patientId);
+  filteredActivities.sort(
+    (left, right) => new Date(right.assignedAt).getTime() - new Date(left.assignedAt).getTime(),
+  );
+
+  const filteredForms = forms.filter((item) => item.patientId === patientId);
+  filteredForms.sort((left, right) => {
+    const leftAnchor = left.assignedAt ?? left.scheduledSendAt ?? left.publishedAt ?? "";
+    const rightAnchor = right.assignedAt ?? right.scheduledSendAt ?? right.publishedAt ?? "";
+    return new Date(rightAnchor).getTime() - new Date(leftAnchor).getTime();
+  });
+
+  return {
+    activities: filteredActivities,
+    forms: filteredForms,
+  };
 }
 
 export function PsychologistPatientsScreen({
@@ -398,14 +497,24 @@ export function PsychologistPatientsScreen({
   const { width: viewportWidth } = useWindowDimensions();
   const accessToken = useAuthStore((state) => state.tokens?.accessToken ?? null);
 
-  const [patients, setPatients] = useState<PatientListItem[]>([]);
-  const [patientDetailsById, setPatientDetailsById] = useState<Record<string, PatientDetail>>({});
+  const [patients, setPatients] = useState<PatientListItem[]>(
+    () => patientsScreenCache?.patients ?? [],
+  );
+  const [patientDetailsById, setPatientDetailsById] = useState<Record<string, PatientDetail>>(
+    () => patientsScreenCache?.patientDetailsById ?? {},
+  );
 
   const [searchQuery, setSearchQuery] = useState("");
 
   const [step, setStep] = useState<PatientsStep>("list");
-  const [stepDirection, setStepDirection] = useState<1 | -1>(1);
-  const stepMotion = useRef(new Animated.Value(1)).current;
+  const transitionStateRef = useRef<{ step: PatientsStep; value: Animated.Value }>({
+    step: "list",
+    value: new Animated.Value(0),
+  });
+  if (transitionStateRef.current.step !== step) {
+    transitionStateRef.current = { step, value: new Animated.Value(0) };
+  }
+  const transition = transitionStateRef.current.value;
 
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<PatientDetailTab>("overview");
@@ -424,6 +533,9 @@ export function PsychologistPatientsScreen({
   const [listLoading, setListLoading] = useState(false);
   const [listHydrating, setListHydrating] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [hasLoadedList, setHasLoadedList] = useState(
+    () => patientsScreenCache?.hasLoadedList ?? false,
+  );
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const [showPullHint, setShowPullHint] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
@@ -445,18 +557,40 @@ export function PsychologistPatientsScreen({
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
+  const listLoadRequestIdRef = useRef(0);
   const detailsHydrationRequestIdRef = useRef(0);
   const detailLoadRequestIdRef = useRef(0);
+  const hasLoadedListRef = useRef(hasLoadedList);
+  const isMountedRef = useRef(true);
+  const stepRef = useRef<PatientsStep>(step);
+  const listAbortControllerRef = useRef<AbortController | null>(null);
+  const detailAbortControllerRef = useRef<AbortController | null>(null);
+  const detailInteractionRef = useRef<{ cancel: () => void } | null>(null);
+  const detailCleanupInteractionRef = useRef<{ cancel: () => void } | null>(null);
+  const detailLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const runWithTokenRetry = useCallback(
-    async <TResult,>(operation: (token: string) => Promise<TResult>): Promise<TResult> => {
+    async <TResult,>(
+      operation: (token: string) => Promise<TResult>,
+      signal?: AbortSignal,
+    ): Promise<TResult> => {
+      if (signal?.aborted) {
+        throw createRequestAbortedError();
+      }
       if (accessToken === null) {
         throw new Error("Sessao expirada. Entre novamente.");
       }
 
       try {
-        return await operation(accessToken);
+        const result = await operation(accessToken);
+        if (signal?.aborted) {
+          throw createRequestAbortedError();
+        }
+        return result;
       } catch (requestError) {
+        if (isRequestAbortedError(requestError)) {
+          throw requestError;
+        }
         if (!isTokenInvalidMessage(requestError)) {
           throw requestError;
         }
@@ -471,29 +605,79 @@ export function PsychologistPatientsScreen({
         if (refreshedToken === null) {
           throw new Error("Sessao expirada. Entre novamente para carregar pacientes.");
         }
-        return operation(refreshedToken);
+        const retriedResult = await operation(refreshedToken);
+        if (signal?.aborted) {
+          throw createRequestAbortedError();
+        }
+        return retriedResult;
       }
     },
     [accessToken],
   );
 
   useEffect(() => {
-    stepMotion.setValue(0);
-    Animated.timing(stepMotion, {
-      toValue: 1,
-      duration: 230,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [step, stepMotion]);
+    hasLoadedListRef.current = hasLoadedList;
+  }, [hasLoadedList]);
 
   useEffect(() => {
-    let mounted = true;
+    stepRef.current = step;
+  }, [step]);
+
+  useEffect(() => {
+    // 🚀 PERFORMANCE: replica a transição da Agenda no conteúdo alvo após trocar de passo.
+    let canceled = false;
+    let firstFrame: number | null = null;
+    let secondFrame: number | null = null;
+    let animation: Animated.CompositeAnimation | null = null;
+
+    firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (canceled) {
+          return;
+        }
+        animation = Animated.timing(transition, {
+          toValue: 1,
+          duration: 280,
+          useNativeDriver: true,
+        });
+        animation.start();
+      });
+    });
+
+    return () => {
+      canceled = true;
+      if (firstFrame !== null) {
+        cancelAnimationFrame(firstFrame);
+      }
+      if (secondFrame !== null) {
+        cancelAnimationFrame(secondFrame);
+      }
+      animation?.stop();
+    };
+  }, [step, transition]);
+
+  useEffect(() => {
+    // 🚀 PERFORMANCE: cleanup centralizado cancela cargas e timeouts pendentes no unmount.
+    return () => {
+      isMountedRef.current = false;
+      listAbortControllerRef.current?.abort();
+      detailAbortControllerRef.current?.abort();
+      detailInteractionRef.current?.cancel();
+      detailCleanupInteractionRef.current?.cancel();
+      if (detailLoadTimeoutRef.current !== null) {
+        clearTimeout(detailLoadTimeoutRef.current);
+        detailLoadTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
 
     const hydratePullHint = async () => {
       try {
         const raw = await AsyncStorage.getItem(PATIENTS_PULL_HINT_SEEN_STORAGE_KEY);
-        if (!mounted) {
+        if (controller.signal.aborted) {
           return;
         }
         if (raw === "1") {
@@ -503,7 +687,7 @@ export function PsychologistPatientsScreen({
         setShowPullHint(true);
         await AsyncStorage.setItem(PATIENTS_PULL_HINT_SEEN_STORAGE_KEY, "1");
       } catch {
-        if (mounted) {
+        if (!controller.signal.aborted) {
           setShowPullHint(true);
         }
       }
@@ -512,39 +696,69 @@ export function PsychologistPatientsScreen({
     void hydratePullHint();
 
     return () => {
-      mounted = false;
+      controller.abort();
     };
   }, []);
 
+  const processWorkspaceCollectionsOnRuntime = useCallback(
+    async (activities: ActivityItem[], forms: ClinicalFormListItem[], patientId: string) => {
+      // 🚀 PERFORMANCE: pré-processamento pesado é adiado para o próximo tick, evitando disputar o mesmo frame da navegação.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+      return processWorkspaceCollections(activities, forms, patientId);
+    },
+    [],
+  );
+
   const hydratePatientCardDetails = useCallback(
-    async (items: PatientListItem[]) => {
-      if (items.length === 0) {
+    async (items: PatientListItem[], signal?: AbortSignal) => {
+      if (items.length === 0 || signal?.aborted || !isMountedRef.current) {
         return;
       }
 
       const requestId = ++detailsHydrationRequestIdRef.current;
       setListHydrating(true);
-      const responses = await Promise.allSettled(items.map(async (patient) =>
-        runWithTokenRetry((token) => apiClient.get(token, patient.id)),
-      ));
 
-      if (requestId !== detailsHydrationRequestIdRef.current) {
-        return;
-      }
+      try {
+        const responses = await Promise.allSettled(
+          items.map(async (patient) =>
+            runWithTokenRetry((token) => apiClient.get(token, patient.id), signal),
+          ),
+        );
 
-      const nextDetails: Record<string, PatientDetail> = {};
-      for (const response of responses) {
-        if (response.status !== "fulfilled") {
-          continue;
+        if (
+          signal?.aborted ||
+          requestId !== detailsHydrationRequestIdRef.current ||
+          !isMountedRef.current
+        ) {
+          return;
         }
-        nextDetails[response.value.id] = response.value;
-      }
 
-      setPatientDetailsById((current) => ({
-        ...current,
-        ...nextDetails,
-      }));
-      setListHydrating(false);
+        const nextDetails: Record<string, PatientDetail> = {};
+        for (const response of responses) {
+          if (response.status !== "fulfilled") {
+            continue;
+          }
+          nextDetails[response.value.id] = response.value;
+        }
+
+        // 🚀 PERFORMANCE: atualização de enriquecimento não urgente em transição concorrente.
+        startTransition(() => {
+          setPatientDetailsById((current) => ({
+            ...current,
+            ...nextDetails,
+          }));
+        });
+      } finally {
+        if (
+          requestId === detailsHydrationRequestIdRef.current &&
+          !signal?.aborted &&
+          isMountedRef.current
+        ) {
+          setListHydrating(false);
+        }
+      }
     },
     [apiClient, runWithTokenRetry],
   );
@@ -554,25 +768,46 @@ export function PsychologistPatientsScreen({
       return;
     }
 
-    setListLoading(true);
+    const requestId = ++listLoadRequestIdRef.current;
+    listAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    listAbortControllerRef.current = controller;
+
+    setListLoading(!hasLoadedListRef.current);
     setError(null);
     try {
-      const list = await runWithTokenRetry((token) =>
-        apiClient.list(token, {
-          sortBy: "full_name",
-          sortOrder: "asc",
-        }),
+      const list = await runWithTokenRetry(
+        (token) =>
+          apiClient.list(token, {
+            sortBy: "full_name",
+            sortOrder: "asc",
+          }),
+        controller.signal,
       );
-      setPatients(list);
-      void hydratePatientCardDetails(list);
+
+      if (controller.signal.aborted || !isMountedRef.current || requestId !== listLoadRequestIdRef.current) {
+        throw createRequestAbortedError();
+      }
+
+      // 🚀 PERFORMANCE: lista principal atualizada como tarefa não urgente para manter responsividade do toque/scroll.
+      startTransition(() => {
+        setPatients(list);
+        setHasLoadedList(true);
+      });
+      void hydratePatientCardDetails(list, controller.signal);
     } catch (requestError) {
+      if (isRequestAbortedError(requestError)) {
+        return;
+      }
       setError(
         requestError instanceof Error
           ? requestError.message
           : "Falha ao carregar lista de pacientes.",
       );
     } finally {
-      setListLoading(false);
+      if (requestId === listLoadRequestIdRef.current && isMountedRef.current) {
+        setListLoading(false);
+      }
     }
   }, [accessToken, apiClient, hydratePatientCardDetails, runWithTokenRetry]);
 
@@ -583,8 +818,13 @@ export function PsychologistPatientsScreen({
       }
 
       const requestId = ++detailLoadRequestIdRef.current;
+      detailAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      detailAbortControllerRef.current = controller;
+
       setDetailLoading(true);
       setError(null);
+      setInfo(null);
 
       const timelineCategories: NotificationCategory[] = [
         "sessions",
@@ -595,9 +835,41 @@ export function PsychologistPatientsScreen({
         "app_usage",
       ];
 
+      const assertRequestActive = () => {
+        if (
+          controller.signal.aborted ||
+          requestId !== detailLoadRequestIdRef.current ||
+          !isMountedRef.current
+        ) {
+          throw createRequestAbortedError();
+        }
+      };
+
       try {
+        const detail = await runWithTokenRetry(
+          (token) => apiClient.get(token, patientId),
+          controller.signal,
+        );
+        assertRequestActive();
+
+        // 🚀 PERFORMANCE: hidrata perfil basico primeiro e adia cargas secundarias para evitar travar na transicao de tela.
+        startTransition(() => {
+          setSelectedPatientDetail(detail);
+          setPatientDetailsById((current) => ({
+            ...current,
+            [detail.id]: detail,
+          }));
+          setSelectedPatientChanges([]);
+          setSelectedPatientProfileTimeline([]);
+          setSelectedUnifiedTimeline([]);
+          setSelectedDeliveries([]);
+          setSelectedNotificationPreferences(null);
+          setSelectedActivities([]);
+          setSelectedForms([]);
+          setSelectedSessions([]);
+        });
+
         const [
-          detailResult,
           changesResult,
           profileTimelineResult,
           unifiedTimelineResult,
@@ -606,37 +878,30 @@ export function PsychologistPatientsScreen({
           activitiesResult,
           formsResult,
         ] = await Promise.allSettled([
-          runWithTokenRetry((token) => apiClient.get(token, patientId)),
-          runWithTokenRetry((token) => apiClient.listChanges(token, patientId, 120)),
-          runWithTokenRetry((token) => apiClient.listTimelineEvents(token, patientId, 160)),
-          runWithTokenRetry((token) =>
-            notificationsClient.listUnifiedTimeline(token, patientId, {
-              categories: timelineCategories,
-              limit: 300,
-            }),
+          runWithTokenRetry((token) => apiClient.listChanges(token, patientId, 120), controller.signal),
+          runWithTokenRetry((token) => apiClient.listTimelineEvents(token, patientId, 160), controller.signal),
+          runWithTokenRetry(
+            (token) =>
+              notificationsClient.listUnifiedTimeline(token, patientId, {
+                categories: timelineCategories,
+                limit: 300,
+              }),
+            controller.signal,
           ),
-          runWithTokenRetry((token) => notificationsClient.listPatientNotifications(token, patientId, 200)),
-          runWithTokenRetry((token) => notificationsClient.getPatientPreferences(token, patientId)),
-          runWithTokenRetry((token) => activitiesClient.listActivities(token, { limit: 500 })),
-          runWithTokenRetry((token) => formsClient.listForms(token, { limit: 500 })),
+          runWithTokenRetry(
+            (token) => notificationsClient.listPatientNotifications(token, patientId, 200),
+            controller.signal,
+          ),
+          runWithTokenRetry(
+            (token) => notificationsClient.getPatientPreferences(token, patientId),
+            controller.signal,
+          ),
+          runWithTokenRetry((token) => activitiesClient.listActivities(token, { limit: 500 }), controller.signal),
+          runWithTokenRetry((token) => formsClient.listForms(token, { limit: 500 }), controller.signal),
         ]);
+        assertRequestActive();
 
-        if (requestId !== detailLoadRequestIdRef.current) {
-          return;
-        }
-
-        if (detailResult.status !== "fulfilled") {
-          throw detailResult.reason;
-        }
-
-        const detail = detailResult.value;
-        setSelectedPatientDetail(detail);
-        setPatientDetailsById((current) => ({
-          ...current,
-          [detail.id]: detail,
-        }));
-
-        setSelectedPatientChanges(
+        const nextChanges: PatientChangePreview[] =
           changesResult.status === "fulfilled"
             ? changesResult.value.map((entry) => {
                 const when = formatDateTimePtBr(entry.createdAt);
@@ -650,62 +915,40 @@ export function PsychologistPatientsScreen({
                   createdAt: entry.createdAt,
                 };
               })
-            : [],
-        );
-
-        setSelectedPatientProfileTimeline(
-          profileTimelineResult.status === "fulfilled" ? profileTimelineResult.value : [],
-        );
-        setSelectedUnifiedTimeline(
-          unifiedTimelineResult.status === "fulfilled" ? unifiedTimelineResult.value : [],
-        );
-        setSelectedDeliveries(deliveriesResult.status === "fulfilled" ? deliveriesResult.value : []);
-        setSelectedNotificationPreferences(
-          preferencesResult.status === "fulfilled" ? preferencesResult.value : null,
-        );
-
-        const activities =
-          activitiesResult.status === "fulfilled"
-            ? activitiesResult.value.filter((item) => item.patientId === patientId)
             : [];
-        setSelectedActivities(
-          [...activities].sort(
-            (left, right) => new Date(right.assignedAt).getTime() - new Date(left.assignedAt).getTime(),
-          ),
-        );
 
-        const forms =
-          formsResult.status === "fulfilled"
-            ? formsResult.value.filter((item) => item.patientId === patientId)
-            : [];
-        setSelectedForms(
-          [...forms].sort((left, right) => {
-            const leftAnchor = left.assignedAt ?? left.scheduledSendAt ?? left.publishedAt ?? "";
-            const rightAnchor = right.assignedAt ?? right.scheduledSendAt ?? right.publishedAt ?? "";
-            return new Date(rightAnchor).getTime() - new Date(leftAnchor).getTime();
-          }),
+        const rawActivities = activitiesResult.status === "fulfilled" ? activitiesResult.value : [];
+        const rawForms = formsResult.status === "fulfilled" ? formsResult.value : [];
+        const nextCollections = await processWorkspaceCollectionsOnRuntime(
+          rawActivities,
+          rawForms,
+          patientId,
         );
+        assertRequestActive();
 
         let sessionsLoadFailed = false;
+        let nextSessions: SessionAgendaItem[] = [];
         try {
           const startYear = new Date(detail.createdAt).getFullYear();
-          const sessions = await runWithTokenRetry((token) =>
-            loadPatientSessionsFromYearRange({
-              accessToken: token,
-              patientId,
-              startYear: Number.isFinite(startYear) ? startYear : new Date().getFullYear(),
-              sessionsClient,
-            }),
+          nextSessions = await runWithTokenRetry(
+            (token) =>
+              loadPatientSessionsFromYearRange({
+                accessToken: token,
+                patientId,
+                startYear: Number.isFinite(startYear) ? startYear : new Date().getFullYear(),
+                sessionsClient,
+                signal: controller.signal,
+              }),
+            controller.signal,
           );
-          if (requestId === detailLoadRequestIdRef.current) {
-            setSelectedSessions(sessions);
+        } catch (sessionsError) {
+          if (isRequestAbortedError(sessionsError)) {
+            throw sessionsError;
           }
-        } catch {
           sessionsLoadFailed = true;
-          if (requestId === detailLoadRequestIdRef.current) {
-            setSelectedSessions([]);
-          }
+          nextSessions = [];
         }
+        assertRequestActive();
 
         const partialFailures = [
           changesResult,
@@ -718,13 +961,33 @@ export function PsychologistPatientsScreen({
         ].some((result) => result.status === "rejected");
         const hasAnyPartialFailure = partialFailures || sessionsLoadFailed;
 
-        setInfo(
-          hasAnyPartialFailure
-            ? "Perfil carregado com dados parciais. Atualize para sincronizar tudo."
-            : "Paciente carregado com timeline integrada.",
-        );
+        // 🚀 PERFORMANCE: lote único de setState em transição reduz cascata de re-render no detalhe.
+        startTransition(() => {
+          setSelectedPatientChanges(nextChanges);
+          setSelectedPatientProfileTimeline(
+            profileTimelineResult.status === "fulfilled" ? profileTimelineResult.value : [],
+          );
+          setSelectedUnifiedTimeline(
+            unifiedTimelineResult.status === "fulfilled" ? unifiedTimelineResult.value : [],
+          );
+          setSelectedDeliveries(deliveriesResult.status === "fulfilled" ? deliveriesResult.value : []);
+          setSelectedNotificationPreferences(
+            preferencesResult.status === "fulfilled" ? preferencesResult.value : null,
+          );
+          setSelectedActivities(nextCollections.activities);
+          setSelectedForms(nextCollections.forms);
+          setSelectedSessions(nextSessions);
+          setInfo(
+            hasAnyPartialFailure
+              ? "Perfil carregado com dados parciais. Atualize para sincronizar tudo."
+              : "Paciente carregado com timeline integrada.",
+          );
+        });
       } catch (requestError) {
-        if (requestId !== detailLoadRequestIdRef.current) {
+        if (isRequestAbortedError(requestError)) {
+          return;
+        }
+        if (requestId !== detailLoadRequestIdRef.current || !isMountedRef.current) {
           return;
         }
         setError(
@@ -733,7 +996,7 @@ export function PsychologistPatientsScreen({
             : "Falha ao carregar a visao interna do paciente.",
         );
       } finally {
-        if (requestId === detailLoadRequestIdRef.current) {
+        if (requestId === detailLoadRequestIdRef.current && isMountedRef.current) {
           setDetailLoading(false);
         }
       }
@@ -744,14 +1007,25 @@ export function PsychologistPatientsScreen({
       apiClient,
       formsClient,
       notificationsClient,
+      processWorkspaceCollectionsOnRuntime,
       runWithTokenRetry,
       sessionsClient,
     ],
   );
 
   useEffect(() => {
-    void loadPatients();
-  }, [loadPatients]);
+    if (!hasLoadedList) {
+      void loadPatients();
+    }
+  }, [hasLoadedList, loadPatients]);
+
+  useEffect(() => {
+    patientsScreenCache = {
+      patients,
+      patientDetailsById,
+      hasLoadedList,
+    };
+  }, [hasLoadedList, patientDetailsById, patients]);
 
   const headerSearchWidth = useMemo(() => {
     const relative = Math.round(viewportWidth * 0.31);
@@ -784,17 +1058,33 @@ export function PsychologistPatientsScreen({
     });
   }, [headerSearchWidth, navigation, searchFocused, searchQuery, step]);
 
+  // 🚀 PERFORMANCE: índice de busca pré-processado evita recomputar blob textual completo a cada digitação.
+  const patientSearchIndexById = useMemo(() => {
+    const next: Record<string, string> = {};
+    for (const patient of patients) {
+      const details = patientDetailsById[patient.id] ?? null;
+      next[patient.id] = resolvePatientSearchBlob(patient, details);
+    }
+    return next;
+  }, [patientDetailsById, patients]);
+
   const filteredPatients = useMemo(() => {
     const normalized = normalizeSearch(searchQuery);
     if (normalized.length === 0) {
       return patients;
     }
 
-    return patients.filter((patient) => {
-      const details = patientDetailsById[patient.id] ?? null;
-      return resolvePatientSearchBlob(patient, details).includes(normalized);
-    });
-  }, [patientDetailsById, patients, searchQuery]);
+    return patients.filter((patient) => (patientSearchIndexById[patient.id] ?? "").includes(normalized));
+  }, [patientSearchIndexById, patients, searchQuery]);
+
+  // 🚀 PERFORMANCE: mapa O(1) reduz buscas lineares repetidas em handlers de contato.
+  const patientsById = useMemo(() => {
+    const byId = new Map<string, PatientListItem>();
+    for (const patient of patients) {
+      byId.set(patient.id, patient);
+    }
+    return byId;
+  }, [patients]);
 
   const detailPatient = selectedPatientDetail ??
     (selectedPatientId ? patientDetailsById[selectedPatientId] ?? null : null);
@@ -816,6 +1106,11 @@ export function PsychologistPatientsScreen({
   }, [selectedSessions]);
 
   const combinedTimeline = useMemo<CombinedTimelineItem[]>(() => {
+    if (detailTab !== "timeline") {
+      // 🚀 PERFORMANCE: evita montar/sortear timeline completa quando o usuario nao esta na aba de timeline.
+      return EMPTY_COMBINED_TIMELINE;
+    }
+
     const items: CombinedTimelineItem[] = [];
 
     for (const event of selectedUnifiedTimeline) {
@@ -887,6 +1182,7 @@ export function PsychologistPatientsScreen({
       (left, right) => new Date(right.createdAtRaw).getTime() - new Date(left.createdAtRaw).getTime(),
     );
   }, [
+    detailTab,
     selectedDeliveries,
     selectedPatientChanges,
     selectedPatientProfileTimeline,
@@ -894,38 +1190,89 @@ export function PsychologistPatientsScreen({
   ]);
 
   const visibleTimeline = useMemo<PatientTimelineFeedItem[]>(
-    () =>
-      combinedTimeline.filter((item) => timelineFilters[item.category]).map((item) => ({
+    () => {
+      if (detailTab !== "timeline") {
+        return EMPTY_TIMELINE_FEED;
+      }
+
+      return combinedTimeline.filter((item) => timelineFilters[item.category]).map((item) => ({
         id: item.id,
         title: item.title,
         subtitle: item.subtitle,
         timestampLabel: item.timestampLabel,
         accentColor: item.accentColor,
-      })),
-    [combinedTimeline, timelineFilters],
+      }));
+    },
+    [combinedTimeline, detailTab, timelineFilters],
   );
 
   const openDetail = useCallback(
     (patientId: string) => {
+      detailAbortControllerRef.current?.abort();
+      detailInteractionRef.current?.cancel();
+      detailCleanupInteractionRef.current?.cancel();
+      if (detailLoadTimeoutRef.current !== null) {
+        clearTimeout(detailLoadTimeoutRef.current);
+        detailLoadTimeoutRef.current = null;
+      }
+      const cachedDetail = patientDetailsById[patientId] ?? null;
+      // 🚀 PERFORMANCE: mantém abertura responsiva; apenas estados visíveis na visão inicial são resetados imediatamente.
+      startTransition(() => {
+        setSelectedPatientDetail(cachedDetail);
+        setSelectedActivities([]);
+        setSelectedForms([]);
+        setSelectedSessions([]);
+      });
       setSelectedPatientId(patientId);
       setDetailTab("overview");
-      setStepDirection(1);
       setStep("detail");
-      void loadSelectedPatientWorkspace(patientId);
+
+      // 🚀 PERFORMANCE: adia hidratação pesada até o final da transição de container transform.
+      detailInteractionRef.current = InteractionManager.runAfterInteractions(() => {
+        detailLoadTimeoutRef.current = setTimeout(() => {
+          detailLoadTimeoutRef.current = null;
+          void loadSelectedPatientWorkspace(patientId);
+        }, DETAIL_WORKSPACE_LOAD_DEFER_MS);
+      });
     },
-    [loadSelectedPatientWorkspace],
+    [loadSelectedPatientWorkspace, patientDetailsById],
   );
 
   const backToList = useCallback(() => {
-    setStepDirection(-1);
+    detailAbortControllerRef.current?.abort();
+    detailInteractionRef.current?.cancel();
+    detailCleanupInteractionRef.current?.cancel();
+    if (detailLoadTimeoutRef.current !== null) {
+      clearTimeout(detailLoadTimeoutRef.current);
+      detailLoadTimeoutRef.current = null;
+    }
+    setDetailLoading(false);
     setStep("list");
     setDetailTab("overview");
+    setSelectedPatientId(null);
     setInfo(null);
+    // 🚀 PERFORMANCE: limpeza pesada do detalhe ocorre após as interações para preservar fluidez no botão "Voltar".
+    detailCleanupInteractionRef.current = InteractionManager.runAfterInteractions(() => {
+      if (!isMountedRef.current || stepRef.current !== "list") {
+        return;
+      }
+      startTransition(() => {
+        setSelectedPatientDetail(null);
+        setSelectedPatientChanges([]);
+        setSelectedPatientProfileTimeline([]);
+        setSelectedUnifiedTimeline([]);
+        setSelectedDeliveries([]);
+        setSelectedNotificationPreferences(null);
+        setSelectedActivities([]);
+        setSelectedForms([]);
+        setSelectedSessions([]);
+      });
+    });
   }, []);
 
   const handleOpenWhatsapp = useCallback(
     async (patientId: string) => {
-      const patient = patients.find((item) => item.id === patientId) ?? null;
+      const patient = patientsById.get(patientId) ?? null;
       const details = patientDetailsById[patientId] ?? null;
       if (patient === null) {
         return;
@@ -946,12 +1293,12 @@ export function PsychologistPatientsScreen({
         );
       }
     },
-    [patientDetailsById, patients],
+    [patientDetailsById, patientsById],
   );
 
   const handleOpenCall = useCallback(
     async (patientId: string) => {
-      const patient = patients.find((item) => item.id === patientId) ?? null;
+      const patient = patientsById.get(patientId) ?? null;
       const details = patientDetailsById[patientId] ?? null;
       const phoneRaw = details?.phone ?? patient?.phone ?? null;
       if (phoneRaw === null || phoneRaw.trim().length < 8) {
@@ -970,7 +1317,7 @@ export function PsychologistPatientsScreen({
         );
       }
     },
-    [patientDetailsById, patients],
+    [patientDetailsById, patientsById],
   );
 
   const handleContactActionUnavailable = useCallback((message: string) => {
@@ -979,10 +1326,13 @@ export function PsychologistPatientsScreen({
   }, []);
 
   const handleToggleTimelineCategory = useCallback((category: TimelineCategoryFilter) => {
-    setTimelineFilters((current) => ({
-      ...current,
-      [category]: !current[category],
-    }));
+    // 🚀 PERFORMANCE: filtros da timeline entram em transição para priorizar fluidez de toque/scroll.
+    startTransition(() => {
+      setTimelineFilters((current) => ({
+        ...current,
+        [category]: !current[category],
+      }));
+    });
   }, []);
 
   const handlePullToRefresh = useCallback(async () => {
@@ -1000,22 +1350,58 @@ export function PsychologistPatientsScreen({
     }
   }, [loadPatients, loadSelectedPatientWorkspace, selectedPatientId, step]);
 
-  const stepTranslateX = stepMotion.interpolate({
-    inputRange: [0, 1],
-    outputRange: [stepDirection * 26, 0],
-  });
-
-  const stepOpacity = stepMotion.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.45, 1],
-  });
-
   const detailDescription = detailPatient?.communicationNotes?.trim()
     ? detailPatient.communicationNotes.trim()
     : "Paciente sem descricao longa no cadastro. Use esta area para centralizar contexto clinico e observacoes recorrentes.";
 
+  // 🚀 PERFORMANCE: pré-processa dados do card fora do renderItem para evitar lógica por célula durante scroll.
+  const patientCardItems = useMemo<PatientCardListItem[]>(
+    () =>
+      filteredPatients.map((patient) => {
+        const detail = patientDetailsById[patient.id] ?? null;
+        return {
+          patient,
+          summary: resolveSummary(patient, detail),
+          ageLabel: resolveCardAgeLabel(detail),
+          birthdayLabel: resolveCardBirthdayLabel(detail),
+          whatsappDisabled:
+            (detail?.phone ?? patient.phone ?? "").trim().length < 8 &&
+            (detail?.email ?? patient.email ?? "").trim().length === 0,
+          callDisabled: (detail?.phone ?? patient.phone ?? "").trim().length < 8,
+        };
+      }),
+    [filteredPatients, patientDetailsById],
+  );
+
+  const renderPatientCardItem = useCallback<ListRenderItem<PatientCardListItem>>(
+    ({ item }) => (
+      <PatientCard
+        patient={item.patient}
+        summary={item.summary}
+        ageLabel={item.ageLabel}
+        birthdayLabel={item.birthdayLabel}
+        onPressCard={openDetail}
+        onPressWhatsApp={handleOpenWhatsapp}
+        onPressPhone={handleOpenCall}
+        onActionUnavailable={handleContactActionUnavailable}
+        whatsappDisabled={item.whatsappDisabled}
+        callDisabled={item.callDisabled}
+      />
+    ),
+    [
+      handleContactActionUnavailable,
+      handleOpenCall,
+      handleOpenWhatsapp,
+      openDetail,
+    ],
+  );
+
+  const patientCardKeyExtractor = useCallback((item: PatientCardListItem) => item.patient.id, []);
+
+  const renderPatientCardSeparator = useCallback(() => <View style={styles.cardSeparator} />, []);
+
   return (
-    <ScreenFadeIn>
+    <View style={styles.root}>
       <ScrollView
         contentContainerStyle={[styles.container, shellStyles.scrollContainer]}
         refreshControl={
@@ -1028,11 +1414,19 @@ export function PsychologistPatientsScreen({
         }
       >
         <Animated.View
+          key={`patients-step-${step}`}
           style={[
             styles.screenWrap,
             {
-              opacity: stepOpacity,
-              transform: [{ translateX: stepTranslateX }],
+              opacity: transition,
+              transform: [
+                {
+                  translateY: transition.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [10, 0],
+                  }),
+                },
+              ],
             },
           ]}
         >
@@ -1050,7 +1444,7 @@ export function PsychologistPatientsScreen({
                 ) : null}
               </View>
 
-              {listLoading ? (
+              {listLoading && !hasLoadedList ? (
                 <View style={styles.loadingRow}>
                   <ActivityIndicator size="small" color="#0F766E" />
                   <Text style={styles.loadingText}>Carregando pacientes...</Text>
@@ -1064,30 +1458,16 @@ export function PsychologistPatientsScreen({
                 </View>
               ) : (
                 <View style={styles.cardsList}>
-                  {filteredPatients.map((patient) => {
-                    const detail = patientDetailsById[patient.id] ?? null;
-                    const summary = resolveSummary(patient, detail);
-                    const ageLabel = resolveAgeLabel(detail);
-                    const birthdayLabel = resolveBirthdayCountdownLabel(detail);
-                    return (
-                      <PatientContactCard
-                        key={patient.id}
-                        patient={patient}
-                        summary={summary}
-                        ageLabel={ageLabel}
-                        birthdayLabel={birthdayLabel}
-                        onOpenProfile={openDetail}
-                        onOpenWhatsapp={handleOpenWhatsapp}
-                        onOpenCall={handleOpenCall}
-                        onActionUnavailable={handleContactActionUnavailable}
-                        whatsappDisabled={
-                          (detail?.phone ?? patient.phone ?? "").trim().length < 8 &&
-                          (detail?.email ?? patient.email ?? "").trim().length === 0
-                        }
-                        callDisabled={(detail?.phone ?? patient.phone ?? "").trim().length < 8}
-                      />
-                    );
-                  })}
+                  {/* 🚀 PERFORMANCE: FlashList reduz custo de renderização incremental em listas longas. */}
+                  <FlashList
+                    data={patientCardItems}
+                    renderItem={renderPatientCardItem}
+                    keyExtractor={patientCardKeyExtractor}
+                    ItemSeparatorComponent={renderPatientCardSeparator}
+                    scrollEnabled={false}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.cardsListContent}
+                  />
                 </View>
               )}
             </>
@@ -1105,7 +1485,7 @@ export function PsychologistPatientsScreen({
                 </Pressable>
               </View>
 
-              {detailLoading ? (
+              {detailLoading && detailPatient === null ? (
                 <View style={styles.loadingRowLarge}>
                   <ActivityIndicator size="small" color="#0F766E" />
                   <Text style={styles.loadingText}>Carregando ambiente do paciente...</Text>
@@ -1370,7 +1750,7 @@ export function PsychologistPatientsScreen({
           </View>
         </View>
       </Modal>
-    </ScreenFadeIn>
+    </View>
   );
 }
 
@@ -1384,6 +1764,9 @@ function StatCard({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   container: {
     flexGrow: 1,
     backgroundColor: "#F4F7FB",
@@ -1475,7 +1858,13 @@ const styles = StyleSheet.create({
     fontWeight: typographyContract.fontWeight,
   },
   cardsList: {
-    gap: 10,
+    minHeight: 1,
+  },
+  cardsListContent: {
+    paddingBottom: 1,
+  },
+  cardSeparator: {
+    height: 10,
   },
   loadingRow: {
     borderRadius: 14,
