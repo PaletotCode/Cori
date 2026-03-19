@@ -12,9 +12,12 @@ import {
 import { typographyContract } from "../../../../shared/ui/typography";
 
 import { AgendaMonthView } from "./AgendaMonthView";
+import { AgendaDayView } from "./AgendaDayView";
 import { AgendaYearView } from "./AgendaYearView";
 import { addMonths } from "./dateUtils";
 import type { AgendaCalendarEvent, AppleCalendarMode, AppleCalendarScope } from "./types";
+
+const EMPTY_DAY_EVENTS: AgendaCalendarEvent[] = [];
 
 interface AppleAgendaCalendarProps {
   loading: boolean;
@@ -30,6 +33,13 @@ interface AppleAgendaCalendarProps {
   eventsByDate: ReadonlyMap<string, AgendaCalendarEvent[]>;
   onScopeChange: (scope: AppleCalendarScope) => void;
   onSelectDate: (dateKey: string) => void;
+  onOpenDayView: (dateKey: string) => void;
+  onExitDayView: () => void;
+  onRescheduleSession: (
+    sessionId: string,
+    nextStartAtIso: string,
+    nextEndAtIso: string,
+  ) => Promise<boolean>;
   onFocusedMonthChange: (monthDate: Date) => void;
 }
 
@@ -47,9 +57,16 @@ export function AppleAgendaCalendar({
   eventsByDate,
   onScopeChange,
   onSelectDate,
+  onOpenDayView,
+  onExitDayView,
+  onRescheduleSession,
   onFocusedMonthChange,
 }: AppleAgendaCalendarProps) {
   const transition = useRef(new Animated.Value(1)).current;
+  const selectedDayEvents = useMemo(
+    () => eventsByDate.get(selectedDateKey) ?? EMPTY_DAY_EVENTS,
+    [eventsByDate, selectedDateKey],
+  );
 
   useEffect(() => {
     transition.setValue(0);
@@ -112,10 +129,16 @@ export function AppleAgendaCalendar({
         ]}
         {...panResponder.panHandlers}
       >
-        {loading ? (
-          <View style={styles.loadingWrap}>
-            <ActivityIndicator size="small" color="#344054" />
-            <Text style={styles.loadingLabel}>{loadingLabel}</Text>
+        {scope === "day" ? (
+          <View style={styles.dayScopeWrap}>
+            <AgendaDayView
+              selectedDateKey={selectedDateKey}
+              todayDateKey={todayDateKey}
+              events={selectedDayEvents}
+              onSelectDate={onSelectDate}
+              onBackToPreviousScope={onExitDayView}
+              onRescheduleSession={onRescheduleSession}
+            />
           </View>
         ) : (
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
@@ -130,7 +153,9 @@ export function AppleAgendaCalendar({
                   onScopeChange("month");
                 }}
               />
-            ) : (
+            ) : null}
+
+            {scope === "month" ? (
               <AgendaMonthView
                 monthDate={focusedMonth}
                 mode={mode}
@@ -138,10 +163,19 @@ export function AppleAgendaCalendar({
                 todayDateKey={todayDateKey}
                 eventsByDate={eventsByDate}
                 onSelectDate={onSelectDate}
+                onOpenDayView={onOpenDayView}
               />
-            )}
+            ) : null}
           </ScrollView>
         )}
+        {loading ? (
+          <View pointerEvents="none" style={styles.loadingOverlay}>
+            <View style={styles.loadingBadge}>
+              <ActivityIndicator size="small" color="#344054" />
+              <Text style={styles.loadingLabel}>{loadingLabel}</Text>
+            </View>
+          </View>
+        ) : null}
       </Animated.View>
     </View>
   );
@@ -162,22 +196,41 @@ const styles = StyleSheet.create({
   contentFrame: {
     flex: 1,
   },
-  loadingWrap: {
-    flex: 1,
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+    justifyContent: "flex-start",
+    paddingTop: 8,
+  },
+  loadingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#E4E7EC",
+    backgroundColor: "rgba(255, 255, 255, 0.93)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 10,
+    elevation: 2,
   },
   loadingLabel: {
     color: "#475467",
-    fontSize: 15,
-    lineHeight: 19,
+    fontSize: 12,
+    lineHeight: 15,
     fontFamily: typographyContract.fontFamily,
     fontWeight: typographyContract.fontWeight,
   },
   scrollContent: {
     paddingBottom: 150,
     gap: 10,
+  },
+  dayScopeWrap: {
+    flex: 1,
   },
   errorText: {
     color: "#B42318",
