@@ -35,6 +35,9 @@ export function applyGlobalTypographyContract() {
   if (typeof originalTextRender === "function") {
     TextComponent.render = function patchedTextRender(...args: unknown[]) {
       const element = originalTextRender.call(this, ...args);
+      if (!React.isValidElement<{ style?: unknown }>(element)) {
+        return element;
+      }
       return React.cloneElement(element, {
         style: appendTypographyStyle(element.props.style),
       });
@@ -45,6 +48,9 @@ export function applyGlobalTypographyContract() {
   if (typeof originalTextInputRender === "function") {
     TextInputComponent.render = function patchedTextInputRender(...args: unknown[]) {
       const element = originalTextInputRender.call(this, ...args);
+      if (!React.isValidElement<{ style?: unknown }>(element)) {
+        return element;
+      }
       return React.cloneElement(element, {
         style: appendTypographyStyle(element.props.style),
       });
