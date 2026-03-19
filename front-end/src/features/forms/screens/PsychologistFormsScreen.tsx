@@ -2,6 +2,9 @@ import { Link } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
+
 import { useAuthStore } from "../../auth/hooks/useAuthStore";
 import {
   createPatientsApiClient,
@@ -282,14 +285,9 @@ export function PsychologistFormsScreen({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.badge}>Psicologo</Text>
-        <Text style={styles.title}>Central de Formularios</Text>
-        <Text style={styles.subtitle}>
-          Builder clinico v1 com envio, agendamento e acompanhamento de respostas.
-        </Text>
-
+    <ScreenFadeIn>
+      <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.sectionTitle}>Builder</Text>
         <Text style={styles.label}>Paciente</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -584,7 +582,8 @@ export function PsychologistFormsScreen({
           <Text style={styles.backLink}>Voltar para sessao do psicologo</Text>
         </Link>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </ScreenFadeIn>
   );
 }
 
@@ -605,25 +604,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
-  },
-  badge: {
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    backgroundColor: "#E0E7FF",
-    color: "#3730A3",
-    fontWeight: "700",
-    fontSize: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  title: {
-    color: "#111827",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  subtitle: {
-    color: "#334155",
-    fontSize: 13,
   },
   sectionTitle: {
     marginTop: 8,

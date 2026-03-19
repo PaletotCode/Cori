@@ -1,749 +1,891 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useNavigation, useRouter } from "expo-router";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { StyleSheet, View } from "react-native";
 
-import { useAuthStore } from "../../auth/hooks/useAuthStore";
-import { useNotificationsStore } from "../../notifications/hooks/useNotificationsStore";
+import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
+import { shellStyles } from "../../../shared/ui/shellStyles";
 import {
-  createPatientsApiClient,
-  type PatientsApiClient,
-} from "../../patients/api/patientsApiClient";
+  createActivitiesApiClient,
+  type ActivitiesApiClient,
+} from "../../activities/api/activitiesApiClient";
+import {
+  createActivityTemplatesApiClient,
+  type ActivityTemplatesApiClient,
+} from "../../activities/api/activityTemplatesApiClient";
+import type {
+  ActivityDetail,
+  ActivityItem,
+  ActivityTemplateListItem,
+} from "../../activities/api/types";
+import { useAuthStore } from "../../auth/hooks/useAuthStore";
+import {
+  createFormsApiClient,
+  type FormsApiClient,
+} from "../../forms/api/formsApiClient";
+import {
+  createFormTemplatesApiClient,
+  type FormTemplatesApiClient,
+} from "../../forms/api/formTemplatesApiClient";
+import type {
+  ClinicalFormDetail,
+  ClinicalFormListItem,
+  FormTemplateListItem,
+} from "../../forms/api/types";
+import { psychologistRoutes } from "../../navigation/guards";
+import { useNotificationsStore } from "../../notifications/hooks/useNotificationsStore";
+import { createPatientsApiClient, type PatientsApiClient } from "../../patients/api/patientsApiClient";
 import type { PatientListItem } from "../../patients/api/types";
 import {
-  createSessionsApiClient,
-  type SessionsApiClient,
-} from "../api/sessionsApiClient";
-import type { AgendaView, SessionAgendaItem, SessionDetail } from "../api/types";
+  AgendaAssignSheet,
+  AgendaHeaderActions,
+  AppleAgendaCalendar,
+  type AgendaAssignFlowStatus,
+  type AgendaAssignMode,
+  type AgendaCalendarEvent,
+  type AppleCalendarMode,
+  type AppleCalendarScope,
+  type AssignActivityDraft,
+  type AssignFormDraft,
+  type AssignSessionDraft,
+} from "../components/apple-calendar";
+import {
+  addMonths,
+  combineDateAndTime,
+  fromDateKey,
+  monthLabel,
+  startOfMonth,
+  toDateKeyFromDate,
+  toDateKeyFromIso,
+  toMonthKey,
+} from "../components/apple-calendar/dateUtils";
+import { createSessionsApiClient, type SessionsApiClient } from "../api/sessionsApiClient";
+import type { SessionAgendaItem } from "../api/types";
 
 const sessionsApiClient = createSessionsApiClient();
 const patientsApiClient = createPatientsApiClient();
+const activitiesApiClient = createActivitiesApiClient();
+const activityTemplatesApiClient = createActivityTemplatesApiClient();
+const formsApiClient = createFormsApiClient();
+const formTemplatesApiClient = createFormTemplatesApiClient();
+
+const INITIAL_FLOW_STATUS: Record<AgendaAssignMode, AgendaAssignFlowStatus> = {
+  session: "idle",
+  activity: "idle",
+  form: "idle",
+};
+
+const INITIAL_FLOW_ERRORS: Partial<Record<AgendaAssignMode, string | null>> = {
+  session: null,
+  activity: null,
+  form: null,
+};
+
+const REALTIME_REFRESH_EVENTS = new Set<string>([
+  "activity_assigned",
+  "form_assigned",
+  "session_created",
+  "session_confirm",
+  "session_reschedule",
+  "session_cancel",
+  "session_complete",
+  "session_confirmed_by_patient",
+]);
 
 interface PsychologistAgendaScreenProps {
   apiClient?: SessionsApiClient;
+  activitiesClient?: ActivitiesApiClient;
+  activityTemplatesClient?: ActivityTemplatesApiClient;
+  formsClient?: FormsApiClient;
+  formTemplatesClient?: FormTemplatesApiClient;
   patientsClient?: PatientsApiClient;
 }
 
-function toIsoNowPlus(hours: number): string {
-  return new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+function sessionColor(status: SessionAgendaItem["status"]): string {
+  if (status === "confirmed" || status === "completed") {
+    return "#54A7F8";
+  }
+  if (status === "scheduled" || status === "rescheduled") {
+    return "#68B8FF";
+  }
+  return "#98A2B3";
+}
+
+function resolveActivityDate(activity: ActivityItem): string {
+  return activity.scheduledSendAt ?? activity.assignedAt ?? activity.dueAt;
+}
+
+function resolveFormDate(form: ClinicalFormListItem): string | null {
+  return form.scheduledSendAt ?? form.assignedAt ?? form.submittedAt ?? form.publishedAt;
+}
+
+function monthScopeFromDateKey(dateKey: string): Date {
+  const parsed = fromDateKey(dateKey);
+  return startOfMonth(parsed);
+}
+
+function normalizeSelectedDateForMonth(selectedDateKey: string, monthDate: Date): string {
+  const selected = fromDateKey(selectedDateKey);
+  const month = monthDate.getMonth();
+  const year = monthDate.getFullYear();
+  const maxDay = new Date(year, month + 1, 0).getDate();
+  const day = Math.min(selected.getDate(), maxDay);
+  return toDateKeyFromDate(new Date(year, month, day));
+}
+
+function createIdempotencyKey(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function upsertById<TItem extends { id: string }>(items: TItem[], nextItem: TItem): TItem[] {
+  const index = items.findIndex((item) => item.id === nextItem.id);
+  if (index < 0) {
+    return [nextItem, ...items];
+  }
+  const nextItems = [...items];
+  nextItems[index] = nextItem;
+  return nextItems;
+}
+
+function mapActivityDetailToItem(detail: ActivityDetail): ActivityItem {
+  return {
+    id: detail.id,
+    patientId: detail.patientId,
+    patientName: detail.patientName,
+    psychologistId: detail.psychologistId,
+    sourceTemplateId: detail.sourceTemplateId ?? null,
+    activityType: detail.activityType,
+    status: detail.status,
+    title: detail.title,
+    dueAt: detail.dueAt,
+    scheduledSendAt: detail.scheduledSendAt ?? null,
+    assignedAt: detail.assignedAt,
+    overdueAt: detail.overdueAt,
+    recurrenceRule: detail.recurrenceRule,
+    recurrenceInterval: detail.recurrenceInterval,
+    recurrenceEndAt: detail.recurrenceEndAt,
+    executionElapsedSeconds: detail.executionElapsedSeconds,
+  };
+}
+
+function mapFormDetailToItem(detail: ClinicalFormDetail): ClinicalFormListItem {
+  return {
+    id: detail.id,
+    patientId: detail.patientId,
+    patientName: detail.patientName,
+    psychologistId: detail.psychologistId,
+    sourceTemplateId: detail.sourceTemplateId ?? null,
+    status: detail.status,
+    title: detail.title,
+    subtitle: detail.subtitle,
+    publishedAt: detail.publishedAt,
+    scheduledSendAt: detail.scheduledSendAt,
+    assignedAt: detail.assignedAt,
+    submittedAt: detail.submittedAt,
+    reviewedAt: detail.reviewedAt,
+  };
+}
+
+function upsertSessionIntoMonth(
+  current: Record<string, SessionAgendaItem[]>,
+  session: SessionAgendaItem,
+): Record<string, SessionAgendaItem[]> {
+  const parsedDate = new Date(session.scheduledStartAt);
+  const monthDate = Number.isNaN(parsedDate.getTime()) ? startOfMonth(new Date()) : startOfMonth(parsedDate);
+  const monthKey = toMonthKey(monthDate);
+  const currentMonthItems = current[monthKey] ?? [];
+  return {
+    ...current,
+    [monthKey]: upsertById(currentMonthItems, session),
+  };
 }
 
 export function PsychologistAgendaScreen({
   apiClient = sessionsApiClient,
+  activitiesClient = activitiesApiClient,
+  activityTemplatesClient = activityTemplatesApiClient,
+  formsClient = formsApiClient,
+  formTemplatesClient = formTemplatesApiClient,
   patientsClient = patientsApiClient,
 }: PsychologistAgendaScreenProps) {
+  const navigation = useNavigation();
+  const router = useRouter();
   const accessToken = useAuthStore((state) => state.tokens?.accessToken ?? null);
-  const latestNotificationId = useNotificationsStore(
-    (state) => state.items[0]?.id ?? null,
-  );
+  const latestNotification = useNotificationsStore((state) => state.items[0] ?? null);
+  const lastHandledRealtimeNotificationIdRef = useRef<string | null>(null);
 
   const [patients, setPatients] = useState<PatientListItem[]>([]);
-  const [agendaView, setAgendaView] = useState<AgendaView>("week");
-  const [referenceDate, setReferenceDate] = useState(new Date().toISOString().slice(0, 10));
-  const [agendaItems, setAgendaItems] = useState<SessionAgendaItem[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [selectedSession, setSelectedSession] = useState<SessionDetail | null>(null);
-  const [timeline, setTimeline] = useState<string[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [forms, setForms] = useState<ClinicalFormListItem[]>([]);
+  const [activityTemplates, setActivityTemplates] = useState<ActivityTemplateListItem[]>([]);
+  const [formTemplates, setFormTemplates] = useState<FormTemplateListItem[]>([]);
+  const [sessionsByMonth, setSessionsByMonth] = useState<Record<string, SessionAgendaItem[]>>({});
 
-  const [newSessionPatientId, setNewSessionPatientId] = useState("");
-  const [newSessionStartAt, setNewSessionStartAt] = useState(toIsoNowPlus(24));
-  const [newSessionEndAt, setNewSessionEndAt] = useState(toIsoNowPlus(25));
-  const [actionReason, setActionReason] = useState("");
-  const [rescheduleStartAt, setRescheduleStartAt] = useState(toIsoNowPlus(48));
-  const [rescheduleEndAt, setRescheduleEndAt] = useState(toIsoNowPlus(49));
+  const [scope, setScope] = useState<AppleCalendarScope>("year");
+  const [mode, setMode] = useState<AppleCalendarMode>("compact");
 
-  const [loadingAgenda, setLoadingAgenda] = useState(false);
-  const [loadingDetail, setLoadingDetail] = useState(false);
-  const [creatingSession, setCreatingSession] = useState(false);
-  const [applyingAction, setApplyingAction] = useState(false);
-  const [runningReminderJob, setRunningReminderJob] = useState(false);
+  const [focusedMonth, setFocusedMonth] = useState(startOfMonth(new Date()));
+  const [selectedDateKey, setSelectedDateKey] = useState(toDateKeyFromDate(new Date()));
 
-  const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [loadingCalendar, setLoadingCalendar] = useState(false);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [createSheetVisible, setCreateSheetVisible] = useState(false);
 
-  const selectedPatientName = useMemo(() => {
-    const patient = patients.find((item) => item.id === newSessionPatientId);
-    return patient?.fullName ?? null;
-  }, [newSessionPatientId, patients]);
+  const [flowStatusByMode, setFlowStatusByMode] =
+    useState<Record<AgendaAssignMode, AgendaAssignFlowStatus>>(INITIAL_FLOW_STATUS);
+  const [flowErrorsByMode, setFlowErrorsByMode] =
+    useState<Partial<Record<AgendaAssignMode, string | null>>>(INITIAL_FLOW_ERRORS);
 
-  const loadPatients = useCallback(async () => {
-    if (accessToken === null) {
-      return;
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
+  const todayDateKey = useMemo(() => toDateKeyFromDate(new Date()), []);
+
+  const loading = loadingContext || loadingCalendar;
+
+  const statusLabel = useMemo(
+    () =>
+      scope === "year"
+        ? `Ano ${focusedMonth.getFullYear()}`
+        : `${monthLabel(focusedMonth)} ${focusedMonth.getFullYear()}`,
+    [focusedMonth, scope],
+  );
+
+  const normalizedErrorMessage = useMemo(() => {
+    if (errorMessage === null) {
+      return null;
     }
-      const patientList = await patientsClient.list(accessToken, {
-        sortBy: "full_name",
-        sortOrder: "asc",
-      });
-    setPatients(patientList);
-    if (patientList.length > 0 && newSessionPatientId.length === 0) {
-      setNewSessionPatientId(patientList[0].id);
+    const normalized = errorMessage.trim().toLowerCase();
+    if (normalized === "not found") {
+      return null;
     }
-  }, [accessToken, newSessionPatientId.length, patientsClient]);
+    return errorMessage;
+  }, [errorMessage]);
 
-  const loadSessionDetail = useCallback(
-    async (sessionId: string) => {
+  const updateFlowState = useCallback(
+    (mode: AgendaAssignMode, status: AgendaAssignFlowStatus, error: string | null = null) => {
+      setFlowStatusByMode((current) => ({
+        ...current,
+        [mode]: status,
+      }));
+      setFlowErrorsByMode((current) => ({
+        ...current,
+        [mode]: error,
+      }));
+    },
+    [],
+  );
+
+  const refreshMonthSessions = useCallback(
+    async (monthDate: Date) => {
       if (accessToken === null) {
         return;
       }
-      setLoadingDetail(true);
-      try {
-        const [detail, events] = await Promise.all([
-          apiClient.getSession(accessToken, sessionId),
-          apiClient.listSessionTimelineEvents(accessToken, sessionId, 50),
-        ]);
-        setSelectedSession(detail);
-        setTimeline(
-          events.map(
-            (event) =>
-              `${event.eventType} | ${new Date(event.createdAt).toLocaleString("pt-BR")}`,
-          ),
-        );
-      } catch (requestError) {
-        setError(
-          requestError instanceof Error
-            ? requestError.message
-            : "Falha ao carregar detalhe da sessao.",
-        );
-      } finally {
-        setLoadingDetail(false);
-      }
+      const monthKey = toMonthKey(monthDate);
+      const response = await apiClient.listAgenda(accessToken, {
+        view: "month",
+        referenceDate: toDateKeyFromDate(monthDate),
+      });
+      setSessionsByMonth((current) => ({
+        ...current,
+        [monthKey]: response,
+      }));
     },
     [accessToken, apiClient],
   );
 
-  const loadAgenda = useCallback(async () => {
+  const refreshMonthsForDateKeys = useCallback(
+    async (dateKeys: string[]) => {
+      const uniqueMonthDates = new Map<string, Date>();
+      for (const dateKey of dateKeys) {
+        if (dateKey.trim().length < 10) {
+          continue;
+        }
+        const monthDate = monthScopeFromDateKey(dateKey);
+        uniqueMonthDates.set(toMonthKey(monthDate), monthDate);
+      }
+      if (uniqueMonthDates.size === 0) {
+        uniqueMonthDates.set(toMonthKey(focusedMonth), focusedMonth);
+      }
+      await Promise.all([...uniqueMonthDates.values()].map(async (monthDate) => refreshMonthSessions(monthDate)));
+    },
+    [focusedMonth, refreshMonthSessions],
+  );
+
+  const loadContextData = useCallback(async () => {
     if (accessToken === null) {
       return;
     }
-    setLoadingAgenda(true);
-    setError(null);
+    setLoadingContext(true);
     try {
-      const agenda = await apiClient.listAgenda(accessToken, {
-        view: agendaView,
-        referenceDate,
-      });
-      setAgendaItems(agenda);
-      if (agenda.length > 0) {
-        const sessionId = selectedSessionId && agenda.some((item) => item.id === selectedSessionId)
-          ? selectedSessionId
-          : agenda[0].id;
-        setSelectedSessionId(sessionId);
-        await loadSessionDetail(sessionId);
+      const [patientResult, activityResult, formResult] = await Promise.allSettled([
+        patientsClient.list(accessToken, {
+          sortBy: "full_name",
+          sortOrder: "asc",
+        }),
+        activitiesClient.listActivities(accessToken, { limit: 260 }),
+        formsClient.listForms(accessToken, { limit: 260 }),
+      ]);
+
+      if (patientResult.status === "fulfilled") {
+        setPatients(patientResult.value);
       } else {
-        setSelectedSessionId(null);
-        setSelectedSession(null);
-        setTimeline([]);
+        throw patientResult.reason;
+      }
+
+      setActivities(activityResult.status === "fulfilled" ? activityResult.value : []);
+      setForms(formResult.status === "fulfilled" ? formResult.value : []);
+    } catch (requestError) {
+      setErrorMessage(
+        requestError instanceof Error ? requestError.message : "Falha ao carregar dados da agenda.",
+      );
+    } finally {
+      setLoadingContext(false);
+    }
+  }, [accessToken, activitiesClient, formsClient, patientsClient]);
+
+  const loadAssignTemplates = useCallback(async () => {
+    if (accessToken === null) {
+      return;
+    }
+    setLoadingTemplates(true);
+    try {
+      const [activityTemplateResult, formTemplateResult] = await Promise.allSettled([
+        activityTemplatesClient.listTemplates(accessToken, { limit: 200 }),
+        formTemplatesClient.listTemplates(accessToken, { limit: 200 }),
+      ]);
+
+      setActivityTemplates(
+        activityTemplateResult.status === "fulfilled" ? activityTemplateResult.value : [],
+      );
+      setFormTemplates(formTemplateResult.status === "fulfilled" ? formTemplateResult.value : []);
+
+      if (
+        activityTemplateResult.status === "rejected" &&
+        formTemplateResult.status === "rejected"
+      ) {
+        throw activityTemplateResult.reason;
       }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Falha ao carregar agenda.");
-    } finally {
-      setLoadingAgenda(false);
-    }
-  }, [accessToken, apiClient, agendaView, loadSessionDetail, referenceDate, selectedSessionId]);
-
-  useEffect(() => {
-    void loadPatients();
-  }, [loadPatients]);
-
-  useEffect(() => {
-    void loadAgenda();
-  }, [loadAgenda]);
-
-  useEffect(() => {
-    if (latestNotificationId !== null) {
-      void loadAgenda();
-    }
-  }, [latestNotificationId, loadAgenda]);
-
-  const handleCreateSession = async () => {
-    if (accessToken === null) {
-      setError("Sessao expirada. Entre novamente.");
-      return;
-    }
-    if (newSessionPatientId.length === 0) {
-      setError("Selecione um paciente para agendar.");
-      return;
-    }
-
-    setCreatingSession(true);
-    setError(null);
-    setInfo(null);
-    try {
-      const created = await apiClient.createSession(accessToken, {
-        patientId: newSessionPatientId,
-        scheduledStartAt: newSessionStartAt,
-        scheduledEndAt: newSessionEndAt,
-        locationMode: "online",
-        notes: "Sessao criada pela agenda.",
-      });
-      setInfo(`Sessao criada. Link de confirmacao: ${created.confirmationLink}`);
-      setSelectedSessionId(created.id);
-      await loadAgenda();
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Falha ao criar sessao.");
-    } finally {
-      setCreatingSession(false);
-    }
-  };
-
-  const handleApplyAction = async (action: "confirm" | "reschedule" | "cancel" | "complete") => {
-    if (accessToken === null || selectedSessionId === null) {
-      setError("Selecione uma sessao para aplicar acao.");
-      return;
-    }
-
-    setApplyingAction(true);
-    setError(null);
-    setInfo(null);
-    try {
-      await apiClient.applySessionAction(accessToken, selectedSessionId, {
-        action,
-        scheduledStartAt: action === "reschedule" ? rescheduleStartAt : undefined,
-        scheduledEndAt: action === "reschedule" ? rescheduleEndAt : undefined,
-        reason: action === "cancel" || action === "reschedule" ? actionReason || undefined : undefined,
-      });
-      setInfo(`Acao ${action} aplicada com sucesso.`);
-      await loadAgenda();
-    } catch (requestError) {
-      setError(
+      setErrorMessage(
         requestError instanceof Error
           ? requestError.message
-          : "Falha ao aplicar acao da sessao.",
+          : "Falha ao carregar templates para atribuicao.",
       );
     } finally {
-      setApplyingAction(false);
+      setLoadingTemplates(false);
     }
-  };
+  }, [accessToken, activityTemplatesClient, formTemplatesClient]);
 
-  const handleRunReminderJob = async () => {
+  const loadVisibleSessions = useCallback(async () => {
     if (accessToken === null) {
       return;
     }
-    setRunningReminderJob(true);
-    setError(null);
-    setInfo(null);
+
+    setLoadingCalendar(true);
     try {
-      const result = await apiClient.runSessionReminderJob(accessToken);
-      setInfo(
-        `Lembretes processados: ${result.processed} | enviados: ${result.sent} | falhas: ${result.failed}`,
-      );
-      await loadAgenda();
+      if (scope === "month") {
+        await refreshMonthSessions(focusedMonth);
+      } else {
+        const year = focusedMonth.getFullYear();
+        const monthDates = Array.from({ length: 12 }, (_, monthIndex) => new Date(year, monthIndex, 1));
+        const responses = await Promise.all(
+          monthDates.map(async (monthDate) => ({
+            monthKey: toMonthKey(monthDate),
+            sessions: await apiClient.listAgenda(accessToken, {
+              view: "month",
+              referenceDate: toDateKeyFromDate(monthDate),
+            }),
+          })),
+        );
+
+        setSessionsByMonth((current) => {
+          const next = { ...current };
+          for (const response of responses) {
+            next[response.monthKey] = response.sessions;
+          }
+          return next;
+        });
+      }
     } catch (requestError) {
-      setError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Falha ao executar scheduler de lembretes.",
+      setErrorMessage(
+        requestError instanceof Error ? requestError.message : "Falha ao sincronizar visualizacao da agenda.",
       );
     } finally {
-      setRunningReminderJob(false);
+      setLoadingCalendar(false);
     }
-  };
+  }, [accessToken, apiClient, focusedMonth, refreshMonthSessions, scope]);
 
-  return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.badge}>Agenda Clinica</Text>
-        <Text style={styles.title}>Sessoes e Confirmacoes</Text>
-        <Text style={styles.subtitle}>Visao dia/semana/mes com status em tempo real.</Text>
+  useEffect(() => {
+    void loadContextData();
+    void loadAssignTemplates();
+  }, [loadAssignTemplates, loadContextData]);
 
-        <View style={styles.row}>
-          <AgendaChip
-            testID="agenda-view-day"
-            active={agendaView === "day"}
-            label="Dia"
-            onPress={() => setAgendaView("day")}
-          />
-          <AgendaChip
-            testID="agenda-view-week"
-            active={agendaView === "week"}
-            label="Semana"
-            onPress={() => setAgendaView("week")}
-          />
-          <AgendaChip
-            testID="agenda-view-month"
-            active={agendaView === "month"}
-            label="Mes"
-            onPress={() => setAgendaView("month")}
-          />
-        </View>
+  useEffect(() => {
+    void loadVisibleSessions();
+  }, [loadVisibleSessions]);
 
-        <TextInput
-          testID="agenda-reference-date"
-          value={referenceDate}
-          onChangeText={setReferenceDate}
-          placeholder="YYYY-MM-DD"
-          placeholderTextColor="#64748B"
-          style={styles.input}
-        />
-        <Pressable
-          accessibilityRole="button"
-          testID="agenda-refresh"
-          onPress={() => void loadAgenda()}
-          style={styles.secondaryButton}
-        >
-          <Text style={styles.secondaryButtonText}>Atualizar agenda</Text>
-        </Pressable>
+  useEffect(() => {
+    if (latestNotification === null || latestNotification.eventType === null || latestNotification.eventType === undefined) {
+      return;
+    }
+    if (!REALTIME_REFRESH_EVENTS.has(latestNotification.eventType)) {
+      return;
+    }
+    if (lastHandledRealtimeNotificationIdRef.current === latestNotification.id) {
+      return;
+    }
 
-        <Text style={styles.sectionTitle}>Nova Sessao</Text>
-        <Text style={styles.hintText}>
-          Paciente selecionado: {selectedPatientName ?? "nenhum"}
-        </Text>
-        <View style={styles.rowWrap}>
-          {patients.map((patient) => (
-            <Pressable
-              accessibilityRole="button"
-              key={patient.id}
-              testID={`agenda-patient-${patient.id}`}
-              onPress={() => setNewSessionPatientId(patient.id)}
-              style={[
-                styles.patientChip,
-                newSessionPatientId === patient.id ? styles.patientChipActive : null,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.patientChipText,
-                  newSessionPatientId === patient.id ? styles.patientChipTextActive : null,
-                ]}
-              >
-                {patient.fullName}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-        <TextInput
-          testID="agenda-create-start"
-          value={newSessionStartAt}
-          onChangeText={setNewSessionStartAt}
-          placeholder="Inicio ISO"
-          placeholderTextColor="#64748B"
-          style={styles.input}
-        />
-        <TextInput
-          testID="agenda-create-end"
-          value={newSessionEndAt}
-          onChangeText={setNewSessionEndAt}
-          placeholder="Fim ISO"
-          placeholderTextColor="#64748B"
-          style={styles.input}
-        />
-        <Pressable
-          accessibilityRole="button"
-          testID="agenda-create-session"
-          disabled={creatingSession}
-          onPress={() => void handleCreateSession()}
-          style={[styles.primaryButton, creatingSession ? styles.disabledButton : null]}
-        >
-          <Text style={styles.primaryButtonText}>
-            {creatingSession ? "Criando..." : "Criar sessao"}
-          </Text>
-        </Pressable>
+    lastHandledRealtimeNotificationIdRef.current = latestNotification.id;
+    void loadContextData();
+    void refreshMonthSessions(monthScopeFromDateKey(selectedDateKey));
+  }, [latestNotification, loadContextData, refreshMonthSessions, selectedDateKey]);
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        {info ? <Text style={styles.infoText}>{info}</Text> : null}
+  const sessionEvents = useMemo<AgendaCalendarEvent[]>(() => {
+    return Object.values(sessionsByMonth)
+      .flat()
+      .map((session) => ({
+        id: session.id,
+        title: session.patientName,
+        startsAt: session.scheduledStartAt,
+        endsAt: session.scheduledEndAt,
+        type: "session",
+        color: sessionColor(session.status),
+        patientName: session.patientName,
+      }));
+  }, [sessionsByMonth]);
 
-        <Text style={styles.sectionTitle}>Agenda</Text>
-        {loadingAgenda ? (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color="#0F766E" />
-            <Text style={styles.loadingText}>Carregando agenda...</Text>
-          </View>
-        ) : agendaItems.length === 0 ? (
-          <Text style={styles.emptyText}>Sem sessoes na janela selecionada.</Text>
-        ) : (
-          agendaItems.map((item) => (
-            <Pressable
-              accessibilityRole="button"
-              key={item.id}
-              testID={`agenda-item-${item.id}`}
-              onPress={() => {
-                setSelectedSessionId(item.id);
-                void loadSessionDetail(item.id);
-              }}
-              style={[
-                styles.itemBox,
-                selectedSessionId === item.id ? styles.itemBoxSelected : null,
-              ]}
-            >
-              <Text style={styles.itemTitle}>{item.patientName}</Text>
-              <Text style={styles.itemMeta}>status: {item.status}</Text>
-              <Text style={styles.itemMeta}>
-                inicio: {new Date(item.scheduledStartAt).toLocaleString("pt-BR")}
-              </Text>
-            </Pressable>
-          ))
-        )}
-
-        <Text style={styles.sectionTitle}>Sessao Detalhada</Text>
-        {loadingDetail ? (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator size="small" color="#0F766E" />
-            <Text style={styles.loadingText}>Carregando detalhes...</Text>
-          </View>
-        ) : selectedSession === null ? (
-          <Text style={styles.emptyText}>Selecione uma sessao na agenda.</Text>
-        ) : (
-          <View style={styles.detailBox}>
-            <Text style={styles.itemMeta}>Paciente: {selectedSession.patientName}</Text>
-            <Text style={styles.itemMeta}>Status: {selectedSession.status}</Text>
-            <Text style={styles.itemMeta}>
-              Inicio: {new Date(selectedSession.scheduledStartAt).toLocaleString("pt-BR")}
-            </Text>
-            <Text style={styles.itemMeta}>
-              Fim: {new Date(selectedSession.scheduledEndAt).toLocaleString("pt-BR")}
-            </Text>
-            <Text style={styles.itemMeta}>
-              Confirmado em:{" "}
-              {selectedSession.confirmedAt
-                ? new Date(selectedSession.confirmedAt).toLocaleString("pt-BR")
-                : "-"}
-            </Text>
-
-            <TextInput
-              testID="agenda-action-reason"
-              value={actionReason}
-              onChangeText={setActionReason}
-              placeholder="Justificativa para remarcacao/cancelamento"
-              placeholderTextColor="#64748B"
-              style={[styles.input, styles.multilineInput]}
-              multiline
-            />
-            <TextInput
-              testID="agenda-reschedule-start"
-              value={rescheduleStartAt}
-              onChangeText={setRescheduleStartAt}
-              placeholder="Novo inicio ISO"
-              placeholderTextColor="#64748B"
-              style={styles.input}
-            />
-            <TextInput
-              testID="agenda-reschedule-end"
-              value={rescheduleEndAt}
-              onChangeText={setRescheduleEndAt}
-              placeholder="Novo fim ISO"
-              placeholderTextColor="#64748B"
-              style={styles.input}
-            />
-
-            <View style={styles.rowWrap}>
-              <Pressable
-                accessibilityRole="button"
-                testID="session-action-confirm"
-                disabled={applyingAction}
-                onPress={() => void handleApplyAction("confirm")}
-                style={[styles.successButton, applyingAction ? styles.disabledButton : null]}
-              >
-                <Text style={styles.actionButtonText}>Confirmar</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                testID="session-action-reschedule"
-                disabled={applyingAction}
-                onPress={() => void handleApplyAction("reschedule")}
-                style={[styles.warningButton, applyingAction ? styles.disabledButton : null]}
-              >
-                <Text style={styles.actionButtonText}>Remarcar</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                testID="session-action-cancel"
-                disabled={applyingAction}
-                onPress={() => void handleApplyAction("cancel")}
-                style={[styles.dangerButton, applyingAction ? styles.disabledButton : null]}
-              >
-                <Text style={styles.actionButtonText}>Cancelar</Text>
-              </Pressable>
-            </View>
-
-            <Pressable
-              accessibilityRole="button"
-              testID="agenda-run-reminders"
-              disabled={runningReminderJob}
-              onPress={() => void handleRunReminderJob()}
-              style={[styles.auxButton, runningReminderJob ? styles.disabledButton : null]}
-            >
-              <Text style={styles.auxButtonText}>
-                {runningReminderJob ? "Processando..." : "Executar lembretes agendados"}
-              </Text>
-            </Pressable>
-
-            <Text style={styles.timelineTitle}>Timeline da sessao</Text>
-            {timeline.length === 0 ? (
-              <Text style={styles.emptyText}>Sem eventos para esta sessao.</Text>
-            ) : (
-              timeline.map((entry) => (
-                <Text key={entry} style={styles.timelineEntry}>
-                  {entry}
-                </Text>
-              ))
-            )}
-          </View>
-        )}
-      </View>
-    </ScrollView>
+  const activityEvents = useMemo<AgendaCalendarEvent[]>(
+    () =>
+      activities.map((activity) => {
+        const eventDate = resolveActivityDate(activity);
+        return {
+          id: activity.id,
+          title: activity.title,
+          startsAt: eventDate,
+          endsAt: eventDate,
+          type: "activity",
+          color: activity.status === "scheduled" ? "#C688DD" : "#D89AE8",
+          patientName: activity.patientName,
+        };
+      }),
+    [activities],
   );
-}
 
-function AgendaChip({
-  active,
-  label,
-  onPress,
-  testID,
-}: {
-  active: boolean;
-  label: string;
-  onPress: () => void;
-  testID: string;
-}) {
+  const formEvents = useMemo<AgendaCalendarEvent[]>(() => {
+    const events: AgendaCalendarEvent[] = [];
+    for (const form of forms) {
+      const formDate = resolveFormDate(form);
+      if (formDate === null) {
+        continue;
+      }
+      events.push({
+        id: form.id,
+        title: form.title,
+        startsAt: formDate,
+        endsAt: formDate,
+        type: "form",
+        color: "#9D7FEA",
+        patientName: form.patientName,
+      });
+    }
+    return events;
+  }, [forms]);
+
+  const eventsByDate = useMemo(() => {
+    const grouped = new Map<string, AgendaCalendarEvent[]>();
+
+    for (const event of [...sessionEvents, ...activityEvents, ...formEvents]) {
+      const dateKey = toDateKeyFromIso(event.startsAt);
+      const bucket = grouped.get(dateKey);
+      if (bucket) {
+        bucket.push(event);
+      } else {
+        grouped.set(dateKey, [event]);
+      }
+    }
+
+    for (const [dateKey, events] of grouped.entries()) {
+      grouped.set(
+        dateKey,
+        [...events].sort(
+          (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
+        ),
+      );
+    }
+    return grouped;
+  }, [activityEvents, formEvents, sessionEvents]);
+
+  const handleFocusedMonthChange = useCallback(
+    (monthDate: Date) => {
+      const normalizedMonth = startOfMonth(monthDate);
+      setFocusedMonth(normalizedMonth);
+      setSelectedDateKey((current) => normalizeSelectedDateForMonth(current, normalizedMonth));
+      setErrorMessage(null);
+    },
+    [setFocusedMonth],
+  );
+
+  const handleScopeChange = useCallback(
+    (nextScope: AppleCalendarScope) => {
+      setScope(nextScope);
+      if (nextScope === "month") {
+        setSelectedDateKey((current) => normalizeSelectedDateForMonth(current, focusedMonth));
+      }
+      setErrorMessage(null);
+    },
+    [focusedMonth],
+  );
+
+  const handleToggleScope = useCallback(() => {
+    setScope((current) => {
+      const next = current === "year" ? "month" : "year";
+      if (next === "month") {
+        setSelectedDateKey((dateKey) => normalizeSelectedDateForMonth(dateKey, focusedMonth));
+      }
+      return next;
+    });
+    setErrorMessage(null);
+  }, [focusedMonth]);
+
+  const handleJumpToToday = useCallback(() => {
+    const now = new Date();
+    setSelectedDateKey(toDateKeyFromDate(now));
+    setFocusedMonth(startOfMonth(now));
+    setErrorMessage(null);
+    setInfoMessage(null);
+  }, []);
+
+  const handlePrevPeriod = useCallback(() => {
+    if (scope === "year") {
+      setFocusedMonth((current) => startOfMonth(new Date(current.getFullYear() - 1, 0, 1)));
+      setSelectedDateKey((dateKey) => {
+        const selected = fromDateKey(dateKey);
+        return toDateKeyFromDate(new Date(selected.getFullYear() - 1, selected.getMonth(), selected.getDate()));
+      });
+      return;
+    }
+    handleFocusedMonthChange(addMonths(focusedMonth, -1));
+  }, [focusedMonth, handleFocusedMonthChange, scope]);
+
+  const handleNextPeriod = useCallback(() => {
+    if (scope === "year") {
+      setFocusedMonth((current) => startOfMonth(new Date(current.getFullYear() + 1, 0, 1)));
+      setSelectedDateKey((dateKey) => {
+        const selected = fromDateKey(dateKey);
+        return toDateKeyFromDate(new Date(selected.getFullYear() + 1, selected.getMonth(), selected.getDate()));
+      });
+      return;
+    }
+    handleFocusedMonthChange(addMonths(focusedMonth, 1));
+  }, [focusedMonth, handleFocusedMonthChange, scope]);
+
+  const openCreateSheet = useCallback(() => {
+    setCreateSheetVisible(true);
+    setErrorMessage(null);
+    setFlowStatusByMode(INITIAL_FLOW_STATUS);
+    setFlowErrorsByMode(INITIAL_FLOW_ERRORS);
+    void loadAssignTemplates();
+  }, [loadAssignTemplates]);
+
+  const handleAssignSession = useCallback(
+    async (draft: AssignSessionDraft) => {
+      if (accessToken === null) {
+        updateFlowState("session", "error", "Sessao expirada. Entre novamente.");
+        return;
+      }
+
+      const startAt = combineDateAndTime(draft.dateKey, draft.startTime);
+      const endAt = combineDateAndTime(draft.dateKey, draft.endTime);
+      if (startAt === null || endAt === null) {
+        updateFlowState("session", "error", "Formato de data/horario invalido para a sessao.");
+        return;
+      }
+
+      updateFlowState("session", "loading");
+      setInfoMessage(null);
+      try {
+        const createdSession = await apiClient.createSession(accessToken, {
+          patientId: draft.patientId,
+          scheduledStartAt: startAt,
+          scheduledEndAt: endAt,
+          locationMode: "online",
+          notes: draft.notes.trim().length > 0 ? draft.notes.trim() : undefined,
+        });
+
+        setSessionsByMonth((current) => upsertSessionIntoMonth(current, createdSession));
+        setCreateSheetVisible(false);
+        updateFlowState("session", "success");
+        setInfoMessage("Sessao atribuida com sucesso.");
+
+        void Promise.all([
+          refreshMonthSessions(monthScopeFromDateKey(draft.dateKey)),
+          loadContextData(),
+        ]);
+      } catch (requestError) {
+        updateFlowState(
+          "session",
+          "error",
+          requestError instanceof Error ? requestError.message : "Falha ao atribuir sessao na agenda.",
+        );
+      } finally {
+        setFlowStatusByMode((current) => ({
+          ...current,
+          session: current.session === "success" ? "success" : "idle",
+        }));
+      }
+    },
+    [accessToken, apiClient, loadContextData, refreshMonthSessions, updateFlowState],
+  );
+
+  const handleAssignActivity = useCallback(
+    async (draft: AssignActivityDraft) => {
+      if (accessToken === null) {
+        updateFlowState("activity", "error", "Sessao expirada. Entre novamente.");
+        return;
+      }
+
+      const dueAt = combineDateAndTime(draft.dueDateKey, draft.dueTime);
+      if (dueAt === null) {
+        updateFlowState("activity", "error", "Prazo invalido para atribuicao da atividade.");
+        return;
+      }
+
+      const scheduledSendAt =
+        draft.sendMode === "scheduled"
+          ? combineDateAndTime(draft.scheduledDateKey, draft.scheduledTime)
+          : undefined;
+      if (draft.sendMode === "scheduled" && scheduledSendAt === null) {
+        updateFlowState("activity", "error", "Envio agendado invalido para atividade.");
+        return;
+      }
+
+      const overrideTitle = draft.overrideTitle.trim();
+      const overrideDescription = draft.overrideDescription.trim();
+      const overrideInstructions = draft.overrideInstructions.trim();
+
+      updateFlowState("activity", "loading");
+      setInfoMessage(null);
+      try {
+        const result = await activityTemplatesClient.assignTemplate(
+          accessToken,
+          draft.templateId,
+          {
+            patientId: draft.patientId,
+            sendMode: draft.sendMode,
+            dueAt,
+            scheduledSendAt: scheduledSendAt ?? undefined,
+            overrides:
+              overrideTitle.length > 0 ||
+              overrideDescription.length > 0 ||
+              overrideInstructions.length > 0
+                ? {
+                    title: overrideTitle.length > 0 ? overrideTitle : undefined,
+                    description: overrideDescription.length > 0 ? overrideDescription : undefined,
+                    instructions: overrideInstructions.length > 0 ? overrideInstructions : undefined,
+                  }
+                : undefined,
+          },
+          createIdempotencyKey("agenda-activity"),
+        );
+
+        setActivities((current) => upsertById(current, mapActivityDetailToItem(result.activity)));
+        setCreateSheetVisible(false);
+        updateFlowState("activity", "success");
+        setInfoMessage(
+          draft.sendMode === "scheduled"
+            ? "Atividade agendada para envio com sucesso."
+            : "Atividade atribuida com sucesso.",
+        );
+
+        const monthsToRefresh = [draft.dueDateKey];
+        if (draft.sendMode === "scheduled") {
+          monthsToRefresh.push(draft.scheduledDateKey);
+        }
+
+        void Promise.all([refreshMonthsForDateKeys(monthsToRefresh), loadContextData()]);
+      } catch (requestError) {
+        updateFlowState(
+          "activity",
+          "error",
+          requestError instanceof Error ? requestError.message : "Falha ao atribuir atividade.",
+        );
+      } finally {
+        setFlowStatusByMode((current) => ({
+          ...current,
+          activity: current.activity === "success" ? "success" : "idle",
+        }));
+      }
+    },
+    [
+      accessToken,
+      activityTemplatesClient,
+      loadContextData,
+      refreshMonthsForDateKeys,
+      updateFlowState,
+    ],
+  );
+
+  const handleAssignForm = useCallback(
+    async (draft: AssignFormDraft) => {
+      if (accessToken === null) {
+        updateFlowState("form", "error", "Sessao expirada. Entre novamente.");
+        return;
+      }
+
+      const scheduledSendAt =
+        draft.sendMode === "scheduled"
+          ? combineDateAndTime(draft.scheduledDateKey, draft.scheduledTime)
+          : undefined;
+      if (draft.sendMode === "scheduled" && scheduledSendAt === null) {
+        updateFlowState("form", "error", "Envio agendado invalido para formulario.");
+        return;
+      }
+
+      const overrideTitle = draft.overrideTitle.trim();
+      const overrideSubtitle = draft.overrideSubtitle.trim();
+
+      updateFlowState("form", "loading");
+      setInfoMessage(null);
+      try {
+        const result = await formTemplatesClient.assignTemplate(
+          accessToken,
+          draft.templateId,
+          {
+            patientId: draft.patientId,
+            sendMode: draft.sendMode,
+            scheduledSendAt: scheduledSendAt ?? undefined,
+            overrides:
+              overrideTitle.length > 0 || overrideSubtitle.length > 0
+                ? {
+                    title: overrideTitle.length > 0 ? overrideTitle : undefined,
+                    subtitle: overrideSubtitle.length > 0 ? overrideSubtitle : undefined,
+                  }
+                : undefined,
+          },
+          createIdempotencyKey("agenda-form"),
+        );
+
+        setForms((current) => upsertById(current, mapFormDetailToItem(result.form)));
+        setCreateSheetVisible(false);
+        updateFlowState("form", "success");
+        setInfoMessage(
+          draft.sendMode === "scheduled"
+            ? "Formulario agendado para envio com sucesso."
+            : "Formulario atribuido com sucesso.",
+        );
+
+        const monthsToRefresh =
+          draft.sendMode === "scheduled" ? [draft.scheduledDateKey] : [selectedDateKey];
+
+        void Promise.all([refreshMonthsForDateKeys(monthsToRefresh), loadContextData()]);
+      } catch (requestError) {
+        updateFlowState(
+          "form",
+          "error",
+          requestError instanceof Error ? requestError.message : "Falha ao atribuir formulario.",
+        );
+      } finally {
+        setFlowStatusByMode((current) => ({
+          ...current,
+          form: current.form === "success" ? "success" : "idle",
+        }));
+      }
+    },
+    [
+      accessToken,
+      formTemplatesClient,
+      loadContextData,
+      refreshMonthsForDateKeys,
+      selectedDateKey,
+      updateFlowState,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerShown: true,
+      title: "Agenda Clinica",
+      headerRight: () => (
+        <AgendaHeaderActions
+          scope={scope}
+          mode={mode}
+          onToday={handleJumpToToday}
+          onOpenCreate={openCreateSheet}
+          onToggleScope={handleToggleScope}
+          onPrev={handlePrevPeriod}
+          onNext={handleNextPeriod}
+          onModeChange={setMode}
+        />
+      ),
+    });
+  }, [
+    handleJumpToToday,
+    handleNextPeriod,
+    handlePrevPeriod,
+    handleToggleScope,
+    mode,
+    navigation,
+    openCreateSheet,
+    scope,
+  ]);
+
   return (
-    <Pressable
-      accessibilityRole="button"
-      testID={testID}
-      onPress={onPress}
-      style={[styles.chip, active ? styles.chipActive : null]}
-    >
-      <Text style={[styles.chipText, active ? styles.chipTextActive : null]}>{label}</Text>
-    </Pressable>
+    <ScreenFadeIn style={styles.screen}>
+      <View style={[shellStyles.viewContainer, styles.container]}>
+        <AppleAgendaCalendar
+          loading={loading}
+          loadingLabel="Sincronizando agenda..."
+          statusLabel={statusLabel}
+          infoMessage={infoMessage}
+          errorMessage={normalizedErrorMessage}
+          scope={scope}
+          mode={mode}
+          selectedDateKey={selectedDateKey}
+          todayDateKey={todayDateKey}
+          focusedMonth={focusedMonth}
+          eventsByDate={eventsByDate}
+          onScopeChange={handleScopeChange}
+          onSelectDate={(dateKey) => {
+            setSelectedDateKey(dateKey);
+            setFocusedMonth(monthScopeFromDateKey(dateKey));
+          }}
+          onFocusedMonthChange={handleFocusedMonthChange}
+        />
+      </View>
+
+      <AgendaAssignSheet
+        visible={createSheetVisible}
+        selectedDateKey={selectedDateKey}
+        patients={patients}
+        activityTemplates={activityTemplates}
+        formTemplates={formTemplates}
+        loadingTemplates={loadingTemplates}
+        flowStatusByMode={flowStatusByMode}
+        errorMessageByMode={flowErrorsByMode}
+        onClose={() => setCreateSheetVisible(false)}
+        onAssignSession={handleAssignSession}
+        onAssignActivity={handleAssignActivity}
+        onAssignForm={handleAssignForm}
+        onOpenActivitiesTemplates={() => {
+          setCreateSheetVisible(false);
+          router.push(psychologistRoutes.activities);
+        }}
+        onOpenFormTemplates={() => {
+          setCreateSheetVisible(false);
+          router.push(psychologistRoutes.forms);
+        }}
+      />
+    </ScreenFadeIn>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   container: {
-    flexGrow: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 20,
-    backgroundColor: "#EEF6FA",
-  },
-  card: {
-    borderRadius: 16,
-    backgroundColor: "#FFFFFF",
-    padding: 18,
-    gap: 8,
-    shadowColor: "#000000",
-    shadowOpacity: 0.08,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 2,
-  },
-  badge: {
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    backgroundColor: "#EDE9FE",
-    color: "#5B21B6",
-    fontWeight: "700",
-    fontSize: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  title: {
-    color: "#0F172A",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  subtitle: {
-    color: "#334155",
-    fontSize: 14,
-  },
-  sectionTitle: {
-    marginTop: 8,
-    color: "#0F172A",
-    fontWeight: "800",
-    fontSize: 16,
-  },
-  hintText: {
-    color: "#475569",
-    fontSize: 12,
-  },
-  row: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  rowWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  chip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#94A3B8",
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  chipActive: {
-    borderColor: "#7C3AED",
-    backgroundColor: "#EDE9FE",
-  },
-  chipText: {
-    color: "#334155",
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  chipTextActive: {
-    color: "#5B21B6",
-  },
-  patientChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#94A3B8",
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  patientChipActive: {
-    borderColor: "#0F766E",
-    backgroundColor: "#CCFBF1",
-  },
-  patientChipText: {
-    color: "#334155",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  patientChipTextActive: {
-    color: "#0F766E",
-  },
-  input: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    backgroundColor: "#F8FAFC",
-    color: "#0F172A",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  multilineInput: {
-    minHeight: 70,
-    textAlignVertical: "top",
-  },
-  primaryButton: {
-    borderRadius: 10,
-    backgroundColor: "#1D4ED8",
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  secondaryButton: {
-    borderRadius: 10,
-    backgroundColor: "#0F766E",
-    paddingVertical: 10,
-    alignItems: "center",
-  },
-  secondaryButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 13,
-  },
-  successButton: {
-    borderRadius: 10,
-    backgroundColor: "#15803D",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    alignItems: "center",
-  },
-  warningButton: {
-    borderRadius: 10,
-    backgroundColor: "#B45309",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    alignItems: "center",
-  },
-  dangerButton: {
-    borderRadius: 10,
-    backgroundColor: "#B91C1C",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    alignItems: "center",
-  },
-  auxButton: {
-    borderRadius: 10,
-    backgroundColor: "#0E7490",
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    alignItems: "center",
-  },
-  auxButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  actionButtonText: {
-    color: "#FFFFFF",
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  disabledButton: {
-    opacity: 0.55,
-  },
-  loadingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  loadingText: {
-    color: "#334155",
-  },
-  emptyText: {
-    color: "#475569",
-    fontSize: 13,
-  },
-  itemBox: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#D1D5DB",
-    backgroundColor: "#F8FAFC",
-    padding: 10,
-    gap: 3,
-  },
-  itemBoxSelected: {
-    borderColor: "#7C3AED",
-    backgroundColor: "#F5F3FF",
-  },
-  itemTitle: {
-    color: "#0F172A",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  itemMeta: {
-    color: "#334155",
-    fontSize: 12,
-  },
-  detailBox: {
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#C4B5FD",
-    backgroundColor: "#FAF5FF",
-    padding: 10,
-    gap: 7,
-  },
-  timelineTitle: {
-    marginTop: 4,
-    color: "#5B21B6",
-    fontWeight: "700",
-    fontSize: 13,
-  },
-  timelineEntry: {
-    color: "#6D28D9",
-    fontSize: 12,
-  },
-  errorText: {
-    color: "#B91C1C",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  infoText: {
-    color: "#0F766E",
-    fontSize: 12,
-    fontWeight: "600",
+    paddingTop: 10,
+    backgroundColor: "#F4F6FA",
   },
 });

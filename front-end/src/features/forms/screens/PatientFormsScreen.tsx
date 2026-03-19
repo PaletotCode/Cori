@@ -2,6 +2,8 @@ import { Link, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+
 import {
   createFormsApiClient,
   FormsApiError,
@@ -160,8 +162,8 @@ export function PatientFormsScreen({ apiClient = formsApiClient }: PatientFormsS
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
+    <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.badge}>Paciente</Text>
         <Text style={styles.title}>Meus Formularios</Text>
         <Text style={styles.subtitle}>

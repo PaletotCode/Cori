@@ -2,6 +2,8 @@ import { Link, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+
 import { createTriageApiClient, TriageApiError } from "../../triage/api/triageApiClient";
 import type {
   IntakeCustomQuestion,
@@ -148,8 +150,8 @@ export function PatientInviteEntryScreen() {
                 : "Convite expirado";
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
+    <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.badge}>Entrada do Paciente</Text>
         <Text style={styles.title}>Convite e Triagem Inicial</Text>
         <Text style={styles.subtitle}>

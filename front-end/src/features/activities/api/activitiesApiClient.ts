@@ -29,10 +29,20 @@ interface ActivityItemResponseBody {
   patient_id: string;
   patient_name: string;
   psychologist_id: string;
+  source_template_id: string | null;
   activity_type: "simple_task" | "guided_meditation" | "habit" | "document_reading";
-  status: "assigned" | "opened" | "in_progress" | "paused" | "completed" | "canceled" | "overdue";
+  status:
+    | "scheduled"
+    | "assigned"
+    | "opened"
+    | "in_progress"
+    | "paused"
+    | "completed"
+    | "canceled"
+    | "overdue";
   title: string;
   due_at: string;
+  scheduled_send_at: string | null;
   assigned_at: string;
   overdue_at: string | null;
   recurrence_rule: "none" | "daily" | "weekly";
@@ -199,10 +209,12 @@ function mapItem(payload: ActivityItemResponseBody): ActivityItem {
     patientId: payload.patient_id,
     patientName: payload.patient_name,
     psychologistId: payload.psychologist_id,
+    sourceTemplateId: payload.source_template_id,
     activityType: payload.activity_type,
     status: payload.status,
     title: payload.title,
     dueAt: payload.due_at,
+    scheduledSendAt: payload.scheduled_send_at,
     assignedAt: payload.assigned_at,
     overdueAt: payload.overdue_at,
     recurrenceRule: payload.recurrence_rule,

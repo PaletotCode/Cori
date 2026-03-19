@@ -77,6 +77,13 @@ realtimeClient.on("message", (payload) => {
       title: payload.title,
       body: payload.body,
       createdAt: payload.created_at,
+      tenantId: payload.tenant_id ?? null,
+      patientId: payload.patient_id ?? null,
+      eventType: payload.event_type ?? null,
+      entityType: payload.entity_type ?? null,
+      entityId: payload.entity_id ?? null,
+      category: payload.category ?? null,
+      metadata: payload.metadata ?? null,
     });
   }
 

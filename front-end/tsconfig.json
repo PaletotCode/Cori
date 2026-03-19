@@ -4,9 +4,17 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": [
+        "src/*"
+      ]
     },
-    "types": ["jest", "node"]
+    "types": [
+      "jest",
+      "node"
+    ]
   },
-  "include": ["app", "src", "tests", "expo-env.d.ts"]
+  "include": [
+    "src",
+    "tests"
+  ]
 }

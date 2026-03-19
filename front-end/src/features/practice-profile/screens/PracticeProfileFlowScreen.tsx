@@ -2,6 +2,9 @@ import { useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
+import { shellStyles } from "../../../shared/ui/shellStyles";
+
 import { useAuthStore } from "../../auth/hooks/useAuthStore";
 import { authStore } from "../../auth/store/authStore";
 import { psychologistRoutes } from "../../navigation/guards";
@@ -203,8 +206,9 @@ export function PracticeProfileFlowScreen({ mode, apiClient }: PracticeProfileFl
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
+    <ScreenFadeIn>
+      <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.badge}>{badge}</Text>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.subtitle}>{currentStep.subtitle}</Text>
@@ -277,7 +281,8 @@ export function PracticeProfileFlowScreen({ mode, apiClient }: PracticeProfileFl
           <Text style={styles.blockText}>Preencha os campos obrigatorios para avancar.</Text>
         ) : null}
       </View>
-    </ScrollView>
+      </ScrollView>
+    </ScreenFadeIn>
   );
 }
 

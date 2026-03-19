@@ -2,6 +2,9 @@ import { Link } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
+
 import { useAuthStore } from "../../auth/hooks/useAuthStore";
 import {
   ActivitiesApiError,
@@ -294,14 +297,9 @@ export function PsychologistActivitiesScreen({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.badge}>Psicologo</Text>
-        <Text style={styles.title}>Central de Atividades</Text>
-        <Text style={styles.subtitle}>
-          Crie atividades, atribua por paciente e acompanhe a execucao pela timeline.
-        </Text>
-
+    <ScreenFadeIn>
+      <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.sectionTitle}>Criar / editar atividade</Text>
         <Text style={styles.label}>Paciente</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.patientChips}>
@@ -581,7 +579,8 @@ export function PsychologistActivitiesScreen({
           <Text style={styles.backLink}>Voltar para sessao do psicologo</Text>
         </Link>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </ScreenFadeIn>
   );
 }
 
@@ -602,25 +601,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
-  },
-  badge: {
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    backgroundColor: "#DBEAFE",
-    color: "#1D4ED8",
-    fontWeight: "700",
-    fontSize: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  title: {
-    color: "#111827",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  subtitle: {
-    color: "#374151",
-    fontSize: 13,
   },
   sectionTitle: {
     marginTop: 8,

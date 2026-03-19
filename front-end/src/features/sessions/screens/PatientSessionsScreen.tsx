@@ -2,6 +2,8 @@ import { Link, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+
 import {
   createSessionsApiClient,
   SessionsApiError,
@@ -93,8 +95,8 @@ export function PatientSessionsScreen({ apiClient = sessionsApiClient }: Patient
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
+    <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.badge}>Paciente</Text>
         <Text style={styles.title}>Minhas Sessoes</Text>
         <Text style={styles.subtitle}>

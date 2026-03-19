@@ -4,10 +4,14 @@ export interface RealtimeNotificationMessage {
   title: string;
   body: string;
   created_at: string;
+  tenant_id?: string | null;
   patient_id?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
   status?: string | null;
   category?: string | null;
   event_type?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface RealtimeConnectedMessage {

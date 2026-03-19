@@ -9,6 +9,9 @@ import {
   View,
 } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
+
 import { useAuthStore } from "../../auth/hooks/useAuthStore";
 import {
   createTriageApiClient,
@@ -199,14 +202,9 @@ export function PsychologistTriageInvitesScreen({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.badge}>Triagem e Convites</Text>
-        <Text style={styles.title}>Entrada do Paciente</Text>
-        <Text style={styles.subtitle}>
-          Gere links seguros para convite simples ou triagem personalizada.
-        </Text>
-
+    <ScreenFadeIn>
+      <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.label}>Modo</Text>
         <View style={styles.chipRow}>
           <ModeChip
@@ -380,7 +378,8 @@ export function PsychologistTriageInvitesScreen({
           </View>
         ) : null}
       </View>
-    </ScrollView>
+      </ScrollView>
+    </ScreenFadeIn>
   );
 }
 
@@ -452,25 +451,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
     elevation: 2,
-  },
-  badge: {
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    backgroundColor: "#DBEAFE",
-    color: "#1E3A8A",
-    fontWeight: "700",
-    fontSize: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  title: {
-    color: "#0F172A",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  subtitle: {
-    color: "#334155",
-    fontSize: 14,
   },
   label: {
     color: "#1E293B",

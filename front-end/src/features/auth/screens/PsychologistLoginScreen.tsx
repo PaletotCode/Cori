@@ -2,6 +2,8 @@ import { Link, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+
 import { useAuthStore } from "../hooks/useAuthStore";
 import { authStore } from "../store/authStore";
 import { psychologistRoutes } from "../../navigation/guards";
@@ -59,8 +61,8 @@ export function PsychologistLoginScreen() {
   }, [status, onboardingCompleted, router]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.card}>
+    <View style={[styles.container, shellStyles.viewContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.badge}>Auth Psicologo</Text>
         <Text style={styles.title}>Entrar no Cori V2</Text>
         <Text style={styles.subtitle}>Use as credenciais de seed para validar o fluxo real.</Text>

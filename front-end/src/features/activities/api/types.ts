@@ -1,5 +1,6 @@
 export type ActivityType = "simple_task" | "guided_meditation" | "habit" | "document_reading";
 export type ActivityStatus =
+  | "scheduled"
   | "assigned"
   | "opened"
   | "in_progress"
@@ -20,10 +21,12 @@ export interface ActivityItem {
   patientId: string;
   patientName: string;
   psychologistId: string;
+  sourceTemplateId?: string | null;
   activityType: ActivityType;
   status: ActivityStatus;
   title: string;
   dueAt: string;
+  scheduledSendAt?: string | null;
   assignedAt: string;
   overdueAt: string | null;
   recurrenceRule: ActivityRecurrenceRule;
@@ -114,4 +117,55 @@ export interface PublicActivityActionResult {
 export interface ActivitiesOverdueRunResult {
   processed: number;
   markedOverdue: number;
+}
+
+export type TemplateSendMode = "immediate" | "scheduled";
+
+export interface ActivityTemplateListItem {
+  id: string;
+  tenantId: string;
+  psychologistId: string;
+  title: string;
+  description: string | null;
+  instructions: string | null;
+  documentUrl: string | null;
+  configuration: Record<string, unknown>;
+  activityType: ActivityType;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
+export interface ActivityTemplateCreatePayload {
+  title: string;
+  description?: string;
+  instructions?: string;
+  documentUrl?: string;
+  configuration?: Record<string, unknown>;
+  activityType: ActivityType;
+}
+
+export interface ActivityTemplateAssignOverridesPayload {
+  title?: string;
+  description?: string;
+  instructions?: string;
+  documentUrl?: string;
+  configuration?: Record<string, unknown>;
+  activityType?: ActivityType;
+  recurrenceRule?: ActivityRecurrenceRule;
+  recurrenceInterval?: number;
+  recurrenceEndAt?: string;
+}
+
+export interface ActivityTemplateAssignPayload {
+  patientId: string;
+  sendMode: TemplateSendMode;
+  scheduledSendAt?: string;
+  dueAt: string;
+  overrides?: ActivityTemplateAssignOverridesPayload;
+}
+
+export interface ActivityTemplateAssignResult {
+  idempotencyReplayed: boolean;
+  activity: ActivityDetail;
 }

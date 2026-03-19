@@ -46,6 +46,7 @@ export interface ClinicalFormListItem {
   patientId: string;
   patientName: string;
   psychologistId: string;
+  sourceTemplateId?: string | null;
   status: FormStatus;
   title: string;
   subtitle: string | null;
@@ -142,4 +143,45 @@ export interface ClinicalFormPublicActionResult {
 export interface FormsDispatchRunResult {
   processed: number;
   dispatched: number;
+}
+
+export type TemplateSendMode = "immediate" | "scheduled";
+
+export interface FormTemplateListItem {
+  id: string;
+  tenantId: string;
+  psychologistId: string;
+  title: string;
+  subtitle: string | null;
+  header: string | null;
+  sections: FormSection[];
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
+export interface FormTemplateCreatePayload {
+  title: string;
+  subtitle?: string;
+  header?: string;
+  sections: FormSectionPayload[];
+}
+
+export interface FormTemplateAssignOverridesPayload {
+  title?: string;
+  subtitle?: string;
+  header?: string;
+  sections?: FormSectionPayload[];
+}
+
+export interface FormTemplateAssignPayload {
+  patientId: string;
+  sendMode: TemplateSendMode;
+  scheduledSendAt?: string;
+  overrides?: FormTemplateAssignOverridesPayload;
+}
+
+export interface FormTemplateAssignResult {
+  idempotencyReplayed: boolean;
+  form: ClinicalFormDetail;
 }

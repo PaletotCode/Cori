@@ -47,6 +47,7 @@ interface ClinicalFormListItemBody {
   patient_id: string;
   patient_name: string;
   psychologist_id: string;
+  source_template_id: string | null;
   status: "draft" | "published" | "scheduled" | "assigned" | "opened" | "partial_saved" | "submitted" | "reviewed";
   title: string;
   subtitle: string | null;
@@ -239,6 +240,7 @@ function mapListItem(payload: ClinicalFormListItemBody): ClinicalFormListItem {
     patientId: payload.patient_id,
     patientName: payload.patient_name,
     psychologistId: payload.psychologist_id,
+    sourceTemplateId: payload.source_template_id,
     status: payload.status,
     title: payload.title,
     subtitle: payload.subtitle,

@@ -2,6 +2,9 @@ import { Link } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
+
 import { useAuthStore } from "../../auth/hooks/useAuthStore";
 import {
   createPatientsApiClient,
@@ -161,14 +164,9 @@ export function PsychologistTimelineScreen({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.badge}>Psicologo</Text>
-        <Text style={styles.title}>Timeline Individual Unificada</Text>
-        <Text style={styles.subtitle}>
-          Filtros por categoria e rastreio de notificacoes por paciente.
-        </Text>
-
+    <ScreenFadeIn>
+      <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.sectionTitle}>Paciente</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           {patients.map((patient) => (
@@ -295,7 +293,8 @@ export function PsychologistTimelineScreen({
           <Text style={styles.backLink}>Voltar para sessao do psicologo</Text>
         </Link>
       </View>
-    </ScrollView>
+      </ScrollView>
+    </ScreenFadeIn>
   );
 }
 
@@ -316,25 +315,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
-  },
-  badge: {
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    backgroundColor: "#DBEAFE",
-    color: "#1D4ED8",
-    fontWeight: "700",
-    fontSize: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  title: {
-    color: "#0F172A",
-    fontSize: 23,
-    fontWeight: "800",
-  },
-  subtitle: {
-    color: "#334155",
-    fontSize: 13,
   },
   sectionTitle: {
     marginTop: 8,
@@ -484,4 +464,3 @@ const styles = StyleSheet.create({
     textDecorationLine: "underline",
   },
 });
-

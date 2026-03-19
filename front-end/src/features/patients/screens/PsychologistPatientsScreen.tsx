@@ -10,6 +10,9 @@ import {
   View,
 } from "react-native";
 
+import { shellStyles } from "../../../shared/ui/shellStyles";
+import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
+
 import { useAuthStore } from "../../auth/hooks/useAuthStore";
 import {
   createPatientsApiClient,
@@ -333,22 +336,27 @@ export function PsychologistPatientsScreen({
     if (selectedPatient === null) {
       return;
     }
-    const shortcut = buildWhatsappShortcut({
-      phone: selectedPatient.phone,
-      message: `Ola, ${selectedPatient.fullName}. Tudo bem?`,
-      fallbackMessage: "Ola! Recebi seu contato e quero alinhar o proximo passo.",
-    });
-    await Linking.openURL(shortcut.url);
-    setInfo(shortcut.isFallback ? "Atalho abriu fallback de WhatsApp." : "Atalho WhatsApp aberto.");
+    try {
+      const shortcut = buildWhatsappShortcut({
+        phone: selectedPatient.phone,
+        message: `Ola, ${selectedPatient.fullName}. Tudo bem?`,
+        fallbackMessage: "Ola! Recebi seu contato e quero alinhar o proximo passo.",
+      });
+      await Linking.openURL(shortcut.url);
+      setInfo(shortcut.isFallback ? "Atalho abriu fallback de WhatsApp." : "Atalho WhatsApp aberto.");
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Nao foi possivel abrir o WhatsApp neste dispositivo.",
+      );
+    }
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.badge}>Pacientes</Text>
-        <Text style={styles.title}>Gestao de Pacientes</Text>
-        <Text style={styles.subtitle}>Lista, perfil, sobrescrita e trilha de alteracoes.</Text>
-
+    <ScreenFadeIn>
+      <ScrollView contentContainerStyle={[styles.container, shellStyles.scrollContainer]}>
+      <View style={[styles.card, shellStyles.surface]}>
         <Text style={styles.label}>Busca</Text>
         <TextInput
           testID="patients-search-input"
@@ -656,7 +664,8 @@ export function PsychologistPatientsScreen({
           <Text style={styles.footerMeta}>Selecionado: {selectedListItem.fullName}</Text>
         ) : null}
       </View>
-    </ScrollView>
+      </ScrollView>
+    </ScreenFadeIn>
   );
 }
 
@@ -699,25 +708,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 10,
     elevation: 2,
-  },
-  badge: {
-    alignSelf: "flex-start",
-    borderRadius: 6,
-    backgroundColor: "#E0E7FF",
-    color: "#3730A3",
-    fontWeight: "700",
-    fontSize: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  title: {
-    color: "#0F172A",
-    fontSize: 24,
-    fontWeight: "800",
-  },
-  subtitle: {
-    color: "#334155",
-    fontSize: 14,
   },
   sectionTitle: {
     marginTop: 8,

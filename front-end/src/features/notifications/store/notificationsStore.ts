@@ -5,6 +5,13 @@ export interface NotificationItem {
   title: string;
   body: string;
   createdAt: string;
+  tenantId?: string | null;
+  patientId?: string | null;
+  eventType?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
+  category?: string | null;
+  metadata?: Record<string, unknown> | null;
   read: boolean;
 }
 
