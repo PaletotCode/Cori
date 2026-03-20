@@ -24,7 +24,6 @@ import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
 import { shellStyles } from "../../../shared/ui/shellStyles";
 import { useNotificationsStore } from "../../notifications/hooks/useNotificationsStore";
 import { toDateKeyFromDate, toDateKeyFromIso } from "../../sessions/components/apple-calendar/dateUtils";
-import { createActivitiesApiClient } from "../../activities/api/activitiesApiClient";
 import type { ActivityItem } from "../../activities/api/types";
 import { useAuthStore } from "../../auth/hooks/useAuthStore";
 import { authStore } from "../../auth/store/authStore";
@@ -38,7 +37,6 @@ import { createSessionsApiClient } from "../../sessions/api/sessionsApiClient";
 import type { SessionAgendaItem } from "../../sessions/api/types";
 
 const sessionsApiClient = createSessionsApiClient();
-const activitiesApiClient = createActivitiesApiClient();
 const practiceProfileApiClient = createPracticeProfileApiClient();
 
 const COMPARISON_ORDER = ["yesterday", "weekAgo", "monthAgo"] as const;
@@ -868,8 +866,7 @@ export function PsychologistSessionScreen() {
       const sortedToday = await sortSessionsOnRuntime(today);
       assertRequestActive();
 
-      const [activitiesResult, profileResult] = await Promise.allSettled([
-        runWithTokenRetry((token) => activitiesApiClient.listActivities(token, { limit: 200 })),
+      const [profileResult] = await Promise.allSettled([
         runWithTokenRetry((token) =>
           practiceProfileApiClient.get(token).catch((error) => {
             if (error instanceof PracticeProfileApiError && error.statusCode === 404) {
@@ -885,7 +882,7 @@ export function PsychologistSessionScreen() {
       startTransition(() => {
         setTodaySessions(sortedToday);
         setWeekSessions(week);
-        setActivityItems(activitiesResult.status === "fulfilled" ? activitiesResult.value : []);
+        setActivityItems([]);
         setSessionPriceCents(
           profileResult.status === "fulfilled" ? (profileResult.value?.sessionPriceCents ?? null) : null,
         );

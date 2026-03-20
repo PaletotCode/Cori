@@ -49,6 +49,7 @@ export interface AssignFormDraft {
 export interface AgendaAssignSheetProps {
   visible: boolean;
   selectedDateKey: string;
+  enableUnifiedFlow?: boolean;
   patients: PatientListItem[];
   activityTemplates: ActivityTemplateListItem[];
   formTemplates: FormTemplateListItem[];

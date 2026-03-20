@@ -74,23 +74,6 @@ export default function PatientTabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="formularios"
-        options={{
-          title: "Formularios",
-          headerTitle: "Formularios",
-          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Forms" />,
-          tabBarIcon: ({ focused }) => (
-            <BottomTabIcon
-              focused={focused}
-              icons={{
-                outline: "document-text-outline",
-                filled: "document-text",
-              }}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="inbox"
         options={{
           title: "Inbox",

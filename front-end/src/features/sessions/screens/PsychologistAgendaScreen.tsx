@@ -542,13 +542,11 @@ export function PsychologistAgendaScreen({
     const requestId = ++contextLoadRequestIdRef.current;
     setLoadingContext(!contextLoadedRef.current);
     try {
-      const [patientResult, activityResult, formResult] = await Promise.allSettled([
+      const [patientResult] = await Promise.allSettled([
         patientsClient.list(accessToken, {
           sortBy: "full_name",
           sortOrder: "asc",
         }),
-        activitiesClient.listActivities(accessToken, { limit: 260 }),
-        formsClient.listForms(accessToken, { limit: 260 }),
       ]);
 
       if (requestId !== contextLoadRequestIdRef.current || !isMountedRef.current) {
@@ -559,8 +557,8 @@ export function PsychologistAgendaScreen({
         // 🚀 PERFORMANCE: atualização de contexto em transição reduz re-render em cascata.
         startTransition(() => {
           setPatients(patientResult.value);
-          setActivities(activityResult.status === "fulfilled" ? activityResult.value : []);
-          setForms(formResult.status === "fulfilled" ? formResult.value : []);
+          setActivities([]);
+          setForms([]);
           setContextLoaded(true);
         });
       } else {
@@ -578,54 +576,15 @@ export function PsychologistAgendaScreen({
         setLoadingContext(false);
       }
     }
-  }, [accessToken, activitiesClient, formsClient, patientsClient]);
+  }, [accessToken, patientsClient]);
 
   const loadAssignTemplates = useCallback(async () => {
-    if (accessToken === null) {
-      return;
-    }
-
-    const requestId = ++templatesLoadRequestIdRef.current;
-    setLoadingTemplates(true);
-    try {
-      const [activityTemplateResult, formTemplateResult] = await Promise.allSettled([
-        activityTemplatesClient.listTemplates(accessToken, { limit: 200 }),
-        formTemplatesClient.listTemplates(accessToken, { limit: 200 }),
-      ]);
-
-      if (requestId !== templatesLoadRequestIdRef.current || !isMountedRef.current) {
-        throw createAgendaRequestAbortedError();
-      }
-
-      // 🚀 PERFORMANCE: templates aplicados em transição para não competir com frame de interação.
-      startTransition(() => {
-        setActivityTemplates(
-          activityTemplateResult.status === "fulfilled" ? activityTemplateResult.value : [],
-        );
-        setFormTemplates(formTemplateResult.status === "fulfilled" ? formTemplateResult.value : []);
-      });
-
-      if (
-        activityTemplateResult.status === "rejected" &&
-        formTemplateResult.status === "rejected"
-      ) {
-        throw activityTemplateResult.reason;
-      }
-    } catch (requestError) {
-      if (isAgendaRequestAbortedError(requestError)) {
-        return;
-      }
-      setErrorMessage(
-        requestError instanceof Error
-          ? requestError.message
-          : "Falha ao carregar templates para atribuicao.",
-      );
-    } finally {
-      if (requestId === templatesLoadRequestIdRef.current && isMountedRef.current) {
-        setLoadingTemplates(false);
-      }
-    }
-  }, [accessToken, activityTemplatesClient, formTemplatesClient]);
+    startTransition(() => {
+      setActivityTemplates([]);
+      setFormTemplates([]);
+    });
+    setLoadingTemplates(false);
+  }, []);
 
   const loadVisibleSessions = useCallback(async () => {
     if (accessToken === null) {
@@ -896,10 +855,7 @@ export function PsychologistAgendaScreen({
     if (!contextLoadedRef.current) {
       void loadContextData();
     }
-    if (activityTemplates.length === 0 || formTemplates.length === 0) {
-      void loadAssignTemplates();
-    }
-  }, [activityTemplates.length, formTemplates.length, loadAssignTemplates, loadContextData]);
+  }, [loadContextData]);
 
   const handleRescheduleSessionFromDayView = useCallback(
     async (sessionId: string, nextStartAtIso: string, nextEndAtIso: string): Promise<boolean> => {
@@ -994,190 +950,23 @@ export function PsychologistAgendaScreen({
   );
 
   const handleAssignActivity = useCallback(
-    async (draft: AssignActivityDraft) => {
-      if (accessToken === null) {
-        const message = "Sessao expirada. Entre novamente.";
-        updateFlowState("activity", "error", message);
-        return { ok: false, message };
-      }
-
-      const computedDueAt =
-        draft.skipDueDate === true
-          ? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
-          : combineDateAndTime(draft.dueDateKey, draft.dueTime);
-      const dueAt = computedDueAt;
-      if (dueAt === null) {
-        const message = "Prazo invalido para atribuicao da atividade.";
-        updateFlowState("activity", "error", message);
-        return { ok: false, message };
-      }
-
-      const scheduledSendAt =
-        draft.sendMode === "scheduled"
-          ? combineDateAndTime(draft.scheduledDateKey, draft.scheduledTime)
-          : undefined;
-      if (draft.sendMode === "scheduled" && scheduledSendAt === null) {
-        const message = "Envio agendado invalido para atividade.";
-        updateFlowState("activity", "error", message);
-        return { ok: false, message };
-      }
-
-      const additionalNote = draft.additionalNote.trim();
-
-      updateFlowState("activity", "loading");
-      setInfoMessage(null);
-      try {
-        const result = await activityTemplatesClient.assignTemplate(
-          accessToken,
-          draft.templateId,
-          {
-            patientId: draft.patientId,
-            sendMode: draft.sendMode,
-            dueAt,
-            scheduledSendAt: scheduledSendAt ?? undefined,
-            overrides:
-              additionalNote.length > 0
-                ? {
-                    instructions: additionalNote,
-                  }
-                : undefined,
-          },
-          createIdempotencyKey("agenda-activity"),
-        );
-
-        setActivities((current) => upsertById(current, mapActivityDetailToItem(result.activity)));
-        updateFlowState("activity", "success");
-        const message =
-          draft.sendMode === "scheduled"
-            ? "Atividade agendada para envio com sucesso."
-            : "Atividade atribuida com sucesso.";
-        setInfoMessage(message);
-
-        const dueDateKeyToRefresh =
-          draft.skipDueDate === true ? toDateKeyFromIso(dueAt) : draft.dueDateKey;
-        const monthsToRefresh = [dueDateKeyToRefresh];
-        if (draft.sendMode === "scheduled") {
-          monthsToRefresh.push(draft.scheduledDateKey);
-        }
-
-        void Promise.all([refreshMonthsForDateKeys(monthsToRefresh), loadContextData()]).catch(
-          (requestError) => {
-            setErrorMessage(
-              resolveAsyncErrorMessage(requestError, "Falha ao sincronizar dados apos atribuir atividade."),
-            );
-          },
-        );
-
-        return { ok: true, message };
-      } catch (requestError) {
-        const message =
-          requestError instanceof Error ? requestError.message : "Falha ao atribuir atividade.";
-        updateFlowState(
-          "activity",
-          "error",
-          message,
-        );
-        return { ok: false, message };
-      } finally {
-        setFlowStatusByMode((current) => ({
-          ...current,
-          activity: current.activity === "success" ? "success" : "idle",
-        }));
-      }
+    async (_draft: AssignActivityDraft) => {
+      const message =
+        "Fluxo legado de atividades foi removido. Vamos reconstruir no novo modulo de documentos.";
+      updateFlowState("activity", "error", message);
+      return { ok: false, message };
     },
-    [
-      accessToken,
-      activityTemplatesClient,
-      loadContextData,
-      refreshMonthsForDateKeys,
-      updateFlowState,
-    ],
+    [updateFlowState],
   );
 
   const handleAssignForm = useCallback(
-    async (draft: AssignFormDraft) => {
-      if (accessToken === null) {
-        const message = "Sessao expirada. Entre novamente.";
-        updateFlowState("form", "error", message);
-        return { ok: false, message };
-      }
-
-      const scheduledSendAt =
-        draft.sendMode === "scheduled"
-          ? combineDateAndTime(draft.scheduledDateKey, draft.scheduledTime)
-          : undefined;
-      if (draft.sendMode === "scheduled" && scheduledSendAt === null) {
-        const message = "Envio agendado invalido para formulario.";
-        updateFlowState("form", "error", message);
-        return { ok: false, message };
-      }
-
-      const additionalNote = draft.additionalNote.trim();
-
-      updateFlowState("form", "loading");
-      setInfoMessage(null);
-      try {
-        const result = await formTemplatesClient.assignTemplate(
-          accessToken,
-          draft.templateId,
-          {
-            patientId: draft.patientId,
-            sendMode: draft.sendMode,
-            scheduledSendAt: scheduledSendAt ?? undefined,
-            overrides:
-              additionalNote.length > 0
-                ? {
-                    subtitle: additionalNote,
-                  }
-                : undefined,
-          },
-          createIdempotencyKey("agenda-form"),
-        );
-
-        setForms((current) => upsertById(current, mapFormDetailToItem(result.form)));
-        updateFlowState("form", "success");
-        const message =
-          draft.sendMode === "scheduled"
-            ? "Formulario agendado para envio com sucesso."
-            : "Formulario atribuido com sucesso.";
-        setInfoMessage(message);
-
-        const monthsToRefresh =
-          draft.sendMode === "scheduled" ? [draft.scheduledDateKey] : [selectedDateKey];
-
-        void Promise.all([refreshMonthsForDateKeys(monthsToRefresh), loadContextData()]).catch(
-          (requestError) => {
-            setErrorMessage(
-              resolveAsyncErrorMessage(requestError, "Falha ao sincronizar dados apos atribuir formulario."),
-            );
-          },
-        );
-
-        return { ok: true, message };
-      } catch (requestError) {
-        const message =
-          requestError instanceof Error ? requestError.message : "Falha ao atribuir formulario.";
-        updateFlowState(
-          "form",
-          "error",
-          message,
-        );
-        return { ok: false, message };
-      } finally {
-        setFlowStatusByMode((current) => ({
-          ...current,
-          form: current.form === "success" ? "success" : "idle",
-        }));
-      }
+    async (_draft: AssignFormDraft) => {
+      const message =
+        "Fluxo legado de formularios foi removido. Vamos reconstruir no novo modulo de documentos.";
+      updateFlowState("form", "error", message);
+      return { ok: false, message };
     },
-    [
-      accessToken,
-      formTemplatesClient,
-      loadContextData,
-      refreshMonthsForDateKeys,
-      selectedDateKey,
-      updateFlowState,
-    ],
+    [updateFlowState],
   );
 
   useLayoutEffect(() => {
@@ -1238,6 +1027,7 @@ export function PsychologistAgendaScreen({
       <AgendaAssignSheet
         visible={createSheetVisible}
         selectedDateKey={selectedDateKey}
+        enableUnifiedFlow={false}
         patients={patients}
         activityTemplates={activityTemplates}
         formTemplates={formTemplates}

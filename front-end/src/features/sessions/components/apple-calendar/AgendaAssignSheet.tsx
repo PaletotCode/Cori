@@ -295,6 +295,7 @@ function mergeResult(first: AgendaAssignResult, second: AgendaAssignResult | nul
 export function AgendaAssignSheet({
   visible,
   selectedDateKey,
+  enableUnifiedFlow = true,
   patients,
   activityTemplates,
   formTemplates,
@@ -1143,26 +1144,28 @@ export function AgendaAssignSheet({
                     </View>
                   </Pressable>
 
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={() => {
-                      setFlow("unified");
-                      setUnifiedStep("kind");
-                      setUnifiedResult({ status: "idle", title: "", message: null });
-                      resetErrorsForFlow();
-                    }}
-                    style={styles.flowCard}
-                  >
-                    <View style={styles.flowCardIconWrap}>
-                      <Ionicons name="layers-outline" size={18} color="#7C3AED" />
-                    </View>
-                    <View style={styles.flowCardBody}>
-                      <Text style={styles.flowCardTitle}>Atribuicao unificada</Text>
-                      <Text style={styles.flowCardText}>
-                        Atividade, formulario ou os dois, com navegacao guiada no mesmo modal.
-                      </Text>
-                    </View>
-                  </Pressable>
+                  {enableUnifiedFlow ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => {
+                        setFlow("unified");
+                        setUnifiedStep("kind");
+                        setUnifiedResult({ status: "idle", title: "", message: null });
+                        resetErrorsForFlow();
+                      }}
+                      style={styles.flowCard}
+                    >
+                      <View style={styles.flowCardIconWrap}>
+                        <Ionicons name="layers-outline" size={18} color="#7C3AED" />
+                      </View>
+                      <View style={styles.flowCardBody}>
+                        <Text style={styles.flowCardTitle}>Atribuicao unificada</Text>
+                        <Text style={styles.flowCardText}>
+                          Atividade, formulario ou os dois, com navegacao guiada no mesmo modal.
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ) : null}
                 </>
               ) : null}
 

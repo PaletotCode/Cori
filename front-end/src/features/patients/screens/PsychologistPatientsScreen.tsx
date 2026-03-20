@@ -1076,8 +1076,8 @@ export function PsychologistPatientsScreen({
             (token) => notificationsClient.getPatientPreferences(token, patientId),
             controller.signal,
           ),
-          runWithTokenRetry((token) => activitiesClient.listActivities(token, { limit: 500 }), controller.signal),
-          runWithTokenRetry((token) => formsClient.listForms(token, { limit: 500 }), controller.signal),
+          Promise.resolve([] as ActivityItem[]),
+          Promise.resolve([] as ClinicalFormListItem[]),
           overviewKpisPromise,
         ]);
         assertRequestActive();

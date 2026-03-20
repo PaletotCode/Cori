@@ -300,34 +300,13 @@ async def psychologist_share_document(
     context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_tenant_db),
 ) -> UnifiedTimelineEventResponse:
-    if payload.action != "shared":
-        raise HTTPException(status_code=422, detail="Acao de documento invalida para psicologo.")
-
-    try:
-        timeline_event = notification_service.record_psychologist_document_event(
-            db,
-            tenant_id=context.tenant_id,
-            patient_id=patient_id,
-            actor_user_id=context.user_id,
-            document_id=document_id,
-            document_title=payload.document_title,
-            note=payload.note,
-        )
-        await notification_service.emit_domain_notification(
-            db,
-            tenant_id=context.tenant_id,
-            patient_id=patient_id,
-            event_type="document_shared",
-            title="Novo documento compartilhado",
-            body=f"Documento '{payload.document_title}' foi compartilhado com voce.",
-            metadata={
-                "document_id": document_id,
-                "document_title": payload.document_title,
-            },
-        )
-    except NotificationServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    return _to_timeline_event(timeline_event)
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Fluxo legado de compartilhamento de documentos foi removido. "
+            "A nova versao sera reconstruida no modulo de atribuicao/aprovacao."
+        ),
+    )
 
 
 @router.get(
@@ -448,14 +427,10 @@ def public_document_action(
     payload: PatientDocumentEventRequest,
     db: Session = Depends(get_db),
 ) -> UnifiedTimelineEventResponse:
-    try:
-        event = notification_service.record_public_document_event(
-            db,
-            patient_access_token=patient_access_token,
-            document_id=document_id,
-            action=payload.action,
-            note=payload.note,
-        )
-    except NotificationServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    return _to_timeline_event(event)
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Fluxo legado de resposta de documentos foi removido. "
+            "A nova versao sera reconstruida no modulo de atribuicao/aprovacao."
+        ),
+    )
