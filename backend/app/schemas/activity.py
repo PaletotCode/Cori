@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ActivityType = Literal["simple_task", "guided_meditation", "habit", "document_reading"]
 ActivityStatus = Literal[
+    "scheduled",
     "assigned",
     "opened",
     "in_progress",
@@ -68,10 +69,12 @@ class ActivityListItemResponse(BaseModel):
     patient_id: str
     patient_name: str
     psychologist_id: str
+    source_template_id: str | None
     activity_type: ActivityType
     status: ActivityStatus
     title: str
     due_at: datetime
+    scheduled_send_at: datetime | None
     assigned_at: datetime
     overdue_at: datetime | None
     recurrence_rule: ActivityRecurrenceRule
@@ -125,3 +128,8 @@ class ActivityTimelineEventResponse(BaseModel):
 class ActivityOverdueRunResponse(BaseModel):
     processed: int
     marked_overdue: int
+
+
+class ActivityDispatchRunResponse(BaseModel):
+    processed: int
+    dispatched: int

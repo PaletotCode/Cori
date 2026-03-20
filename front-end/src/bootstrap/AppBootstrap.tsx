@@ -2,6 +2,7 @@ import { Lora_400Regular } from "@expo-google-fonts/lora";
 import { useFonts } from "expo-font";
 import { useEffect } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { useAuthStore } from "../features/auth/hooks/useAuthStore";
 import { authStore } from "../features/auth/store/authStore";
@@ -56,7 +57,7 @@ export function AppBootstrap({ children }: AppBootstrapProps) {
     );
   }
 
-  return <>{children}</>;
+  return <SafeAreaProvider>{children}</SafeAreaProvider>;
 }
 
 const styles = StyleSheet.create({

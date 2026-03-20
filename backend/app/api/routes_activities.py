@@ -11,6 +11,7 @@ from app.schemas.activity import (
     ActivityCreateRequest,
     ActivityCreateResponse,
     ActivityDetailResponse,
+    ActivityDispatchRunResponse,
     ActivityListItemResponse,
     ActivityOverdueRunResponse,
     ActivityPatientActionRequest,
@@ -25,6 +26,7 @@ from app.schemas.activity import (
 )
 from app.services.activity_service import ActivityServiceError, activity_service
 from app.services.notification_service import notification_service
+from app.services.template_assignment_service import template_assignment_service
 
 router = APIRouter(tags=["activities"])
 
@@ -36,10 +38,14 @@ def _to_list_item(activity: Activity) -> ActivityListItemResponse:
         patient_id=str(activity.patient_id),
         patient_name=patient_name,
         psychologist_id=str(activity.psychologist_id),
+        source_template_id=str(activity.source_template_id)
+        if activity.source_template_id is not None
+        else None,
         activity_type=cast(ActivityType, activity.activity_type),
         status=cast(ActivityStatus, activity.status),
         title=activity.title,
         due_at=activity.due_at,
+        scheduled_send_at=activity.scheduled_send_at,
         assigned_at=activity.assigned_at,
         overdue_at=activity.overdue_at,
         recurrence_rule=cast(ActivityRecurrenceRule, activity.recurrence_rule),
@@ -323,4 +329,39 @@ def run_overdue_scheduler(
     return ActivityOverdueRunResponse(
         processed=result.processed,
         marked_overdue=result.marked_overdue,
+    )
+
+
+@router.post(
+    "/scheduler/activities-dispatch/run",
+    response_model=ActivityDispatchRunResponse,
+)
+async def run_scheduled_activities_dispatch(
+    context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_tenant_db),
+) -> ActivityDispatchRunResponse:
+    result = template_assignment_service.dispatch_scheduled_activities(
+        db,
+        tenant_id=context.tenant_id,
+    )
+    if result.dispatched > 0:
+        for activity in result.dispatched_activities:
+            await notification_service.emit_domain_notification(
+                db,
+                tenant_id=context.tenant_id,
+                patient_id=activity.patient_id,
+                event_type="activity_assigned",
+                title="Atividade agendada enviada",
+                body=f"Atividade '{activity.title}' ficou disponivel para voce.",
+                metadata={
+                    "activity_id": str(activity.id),
+                    "source_template_id": str(activity.source_template_id)
+                    if activity.source_template_id is not None
+                    else None,
+                    "send_mode": "scheduled",
+                },
+            )
+    return ActivityDispatchRunResponse(
+        processed=result.processed,
+        dispatched=result.dispatched,
     )

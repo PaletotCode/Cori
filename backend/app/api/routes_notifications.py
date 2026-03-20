@@ -26,6 +26,10 @@ from app.services.notification_service import (
     categorize_timeline_event,
     notification_service,
 )
+from app.services.timeline_natural_language import (
+    build_delivery_natural_content,
+    build_timeline_natural_content,
+)
 
 router = APIRouter(tags=["notifications"])
 
@@ -52,6 +56,15 @@ def _to_rule(rule: ResolvedNotificationRule) -> NotificationRuleResponse:
 
 
 def _to_delivery(delivery: NotificationDelivery) -> NotificationDeliveryResponse:
+    natural = build_delivery_natural_content(
+        category=delivery.category,
+        event_type=delivery.event_type,
+        status=delivery.status,
+        title=delivery.title,
+        body=delivery.body,
+        status_reason=delivery.status_reason,
+        metadata=delivery.metadata_payload,
+    )
     return NotificationDeliveryResponse(
         id=str(delivery.id),
         tenant_id=str(delivery.tenant_id),
@@ -62,6 +75,10 @@ def _to_delivery(delivery: NotificationDelivery) -> NotificationDeliveryResponse
         body=delivery.body,
         status=cast(NotificationDeliveryStatus, delivery.status),
         status_reason=delivery.status_reason,
+        category_label=natural.category_label,
+        natural_title=natural.title,
+        natural_event_label=natural.event_label,
+        natural_detail=natural.detail,
         channel_inbox=delivery.channel_inbox,
         channel_push=delivery.channel_push,
         channel_realtime=delivery.channel_realtime,
@@ -78,11 +95,20 @@ def _to_delivery(delivery: NotificationDelivery) -> NotificationDeliveryResponse
 
 
 def _to_timeline_event(event: TimelineEvent) -> UnifiedTimelineEventResponse:
-    return UnifiedTimelineEventResponse(
-        id=str(event.id),
-        category=cast(NotificationCategory, categorize_timeline_event(event)),
+    resolved_category = cast(NotificationCategory, categorize_timeline_event(event))
+    natural = build_timeline_natural_content(
+        category=resolved_category,
         event_type=event.event_type,
         actor_type=event.actor_type,
+        payload=event.payload,
+    )
+    return UnifiedTimelineEventResponse(
+        id=str(event.id),
+        category=resolved_category,
+        event_type=event.event_type,
+        category_label=natural.category_label,
+        actor_type=event.actor_type,
+        actor_label=natural.actor_label,
         actor_id=str(event.actor_id) if event.actor_id is not None else None,
         session_id=str(event.session_id) if event.session_id is not None else None,
         activity_id=str(event.activity_id) if event.activity_id is not None else None,
@@ -91,6 +117,9 @@ def _to_timeline_event(event: TimelineEvent) -> UnifiedTimelineEventResponse:
         if event.notification_delivery_id is not None
         else None,
         payload=event.payload,
+        natural_title=natural.title,
+        natural_event_label=natural.event_label,
+        natural_detail=natural.detail,
         created_at=event.created_at,
     )
 

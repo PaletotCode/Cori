@@ -123,6 +123,11 @@ export interface ActivityTemplatesApiClient {
     accessToken: string,
     payload: ActivityTemplateCreatePayload,
   ) => Promise<ActivityTemplateListItem>;
+  updateTemplate: (
+    accessToken: string,
+    templateId: string,
+    payload: ActivityTemplateCreatePayload,
+  ) => Promise<ActivityTemplateListItem>;
   assignTemplate: (
     accessToken: string,
     templateId: string,
@@ -306,6 +311,26 @@ export function createActivityTemplatesApiClient(
         "/activity-templates",
         {
           method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(mapCreatePayload(payload)),
+        },
+      );
+      return mapTemplate(response);
+    },
+
+    async updateTemplate(
+      accessToken: string,
+      templateId: string,
+      payload: ActivityTemplateCreatePayload,
+    ): Promise<ActivityTemplateListItem> {
+      const response = await requestJson<ActivityTemplateResponseBody>(
+        fetchImpl,
+        baseUrl,
+        `/activity-templates/${templateId}`,
+        {
+          method: "PATCH",
           headers: {
             Authorization: `Bearer ${accessToken}`,
           },

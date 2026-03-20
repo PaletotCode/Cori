@@ -1,4 +1,13 @@
-import { memo, useMemo, type Dispatch, type SetStateAction } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { typographyContract } from "../../../shared/ui/typography";
@@ -8,6 +17,10 @@ import { WEEKDAY_LABELS_PT, fromDateKey, toDateKeyFromDate, toDateKeyFromIso } f
 const PREVIEW_HOUR_HEIGHT = 44;
 const PREVIEW_DAY_MINUTES = 24 * 60;
 const PREVIEW_LEFT_GUTTER = 48;
+const PREVIEW_VIEWPORT_HEIGHT = 260;
+const PREVIEW_FOCUS_BEFORE_MINUTES = 60;
+const PREVIEW_FOCUS_AFTER_MINUTES = 180;
+const PREVIEW_RETURN_TO_FOCUS_TIMEOUT_MS = 10_000;
 const PREVIEW_HOURS = Array.from({ length: 24 }, (_, index) => index);
 
 interface PanelAgendaDayPreviewProps {
@@ -24,6 +37,10 @@ function toMinutesFromIso(isoDateTime: string): number {
     return 0;
   }
   return parsed.getHours() * 60 + parsed.getMinutes();
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function toClockLabel(minutes: number): string {
@@ -59,6 +76,37 @@ function getSessionLayout(session: SessionAgendaItem, pixelsPerMinute: number): 
   };
 }
 
+function resolveFocusStartMinutes(params: {
+  daySessions: SessionAgendaItem[];
+  selectedDateKey: string;
+  todayDateKey: string;
+  nowMinutes: number;
+}): number {
+  const { daySessions, selectedDateKey, todayDateKey, nowMinutes } = params;
+
+  if (daySessions.length === 0) {
+    return nowMinutes;
+  }
+
+  const isToday = selectedDateKey === todayDateKey;
+
+  let referenceSession = daySessions[0];
+  if (isToday) {
+    // 🚀 PERFORMANCE: prioriza sessão em andamento/próxima para manter contexto clínico relevante no preview.
+    referenceSession =
+      daySessions.find((session) => toMinutesFromIso(session.scheduledEndAt) >= nowMinutes) ??
+      daySessions[daySessions.length - 1];
+  }
+
+  const startMinutes = toMinutesFromIso(referenceSession.scheduledStartAt);
+  const previewWindowStart = startMinutes - PREVIEW_FOCUS_BEFORE_MINUTES;
+  const previewWindowEnd = startMinutes + PREVIEW_FOCUS_AFTER_MINUTES;
+  const boundedStart = clampNumber(previewWindowStart, 0, PREVIEW_DAY_MINUTES - 1);
+  const boundedEnd = clampNumber(previewWindowEnd, 0, PREVIEW_DAY_MINUTES - 1);
+
+  return Math.max(0, Math.min(boundedStart, boundedEnd - 1));
+}
+
 export const PanelAgendaDayPreview = memo(function PanelAgendaDayPreview({
   selectedDateKey,
   todayDateKey,
@@ -66,6 +114,11 @@ export const PanelAgendaDayPreview = memo(function PanelAgendaDayPreview({
   onSelectDate,
   onPressSession,
 }: PanelAgendaDayPreviewProps) {
+  const timelineRef = useRef<ScrollView | null>(null);
+  const returnToFocusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasAppliedInitialFocusRef = useRef(false);
+  const autoFocusBlockedUntilRef = useRef(0);
+  const [clockTick, setClockTick] = useState(() => Date.now());
   const pixelsPerMinute = PREVIEW_HOUR_HEIGHT / 60;
 
   const selectedDate = useMemo(() => fromDateKey(selectedDateKey), [selectedDateKey]);
@@ -88,13 +141,89 @@ export const PanelAgendaDayPreview = memo(function PanelAgendaDayPreview({
     [selectedDateKey, weekSessions],
   );
 
+  useEffect(() => {
+    // 🚀 PERFORMANCE: atualização em batida de 1 minuto mantém foco da timeline atual sem renderizações excessivas.
+    const intervalId = setInterval(() => {
+      setClockTick(Date.now());
+    }, 60_000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, []);
+
   const nowMinutes = useMemo(() => {
-    if (selectedDateKey !== todayDateKey) {
-      return null;
-    }
-    const now = new Date();
+    const now = new Date(clockTick);
     return now.getHours() * 60 + now.getMinutes();
-  }, [selectedDateKey, todayDateKey]);
+  }, [clockTick]);
+
+  const clearReturnToFocusTimeout = useCallback(() => {
+    if (returnToFocusTimeoutRef.current !== null) {
+      clearTimeout(returnToFocusTimeoutRef.current);
+      returnToFocusTimeoutRef.current = null;
+    }
+  }, []);
+
+  const focusOffset = useMemo(() => {
+    const focusStartMinutes = resolveFocusStartMinutes({
+      daySessions,
+      selectedDateKey,
+      todayDateKey,
+      nowMinutes,
+    });
+    const totalTimelineHeight = PREVIEW_DAY_MINUTES * pixelsPerMinute;
+    const maxOffset = Math.max(0, totalTimelineHeight - PREVIEW_VIEWPORT_HEIGHT);
+    return clampNumber(focusStartMinutes * pixelsPerMinute, 0, maxOffset);
+  }, [daySessions, nowMinutes, pixelsPerMinute, selectedDateKey, todayDateKey]);
+
+  const scrollToFocus = useCallback(
+    (animated: boolean) => {
+      timelineRef.current?.scrollTo({
+        y: focusOffset,
+        animated,
+      });
+    },
+    [focusOffset],
+  );
+
+  const scheduleReturnToFocus = useCallback(() => {
+    clearReturnToFocusTimeout();
+    autoFocusBlockedUntilRef.current = Date.now() + PREVIEW_RETURN_TO_FOCUS_TIMEOUT_MS;
+    returnToFocusTimeoutRef.current = setTimeout(() => {
+      autoFocusBlockedUntilRef.current = 0;
+      scrollToFocus(true);
+    }, PREVIEW_RETURN_TO_FOCUS_TIMEOUT_MS);
+  }, [clearReturnToFocusTimeout, scrollToFocus]);
+
+  const handleSelectDate = useCallback(
+    (dateKey: string) => {
+      clearReturnToFocusTimeout();
+      autoFocusBlockedUntilRef.current = 0;
+      onSelectDate(dateKey);
+    },
+    [clearReturnToFocusTimeout, onSelectDate],
+  );
+
+  useEffect(() => {
+    return () => {
+      clearReturnToFocusTimeout();
+    };
+  }, [clearReturnToFocusTimeout]);
+
+  useEffect(() => {
+    if (Date.now() < autoFocusBlockedUntilRef.current) {
+      return;
+    }
+
+    const animationFrameId = requestAnimationFrame(() => {
+      scrollToFocus(hasAppliedInitialFocusRef.current);
+      hasAppliedInitialFocusRef.current = true;
+    });
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [scrollToFocus]);
 
   return (
     <View style={styles.previewWrap}>
@@ -107,7 +236,7 @@ export const PanelAgendaDayPreview = memo(function PanelAgendaDayPreview({
             <Pressable
               key={dateKey}
               accessibilityRole="button"
-              onPress={() => onSelectDate(dateKey)}
+              onPress={() => handleSelectDate(dateKey)}
               style={styles.weekDayCell}
             >
               <Text style={[styles.weekdayLabel, isSelected ? styles.weekdayLabelSelected : null]}>
@@ -136,10 +265,15 @@ export const PanelAgendaDayPreview = memo(function PanelAgendaDayPreview({
 
       <View style={styles.timelineViewport}>
         <ScrollView
+          ref={timelineRef}
           bounces
           alwaysBounceVertical
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.timelineScrollContent}
+          onScrollBeginDrag={clearReturnToFocusTimeout}
+          onScrollEndDrag={scheduleReturnToFocus}
+          onMomentumScrollBegin={clearReturnToFocusTimeout}
+          onMomentumScrollEnd={scheduleReturnToFocus}
         >
           <View
             style={[
@@ -154,7 +288,7 @@ export const PanelAgendaDayPreview = memo(function PanelAgendaDayPreview({
               </View>
             ))}
 
-            {nowMinutes !== null ? (
+            {selectedDateKey === todayDateKey ? (
               <View style={[styles.nowLineRow, { top: nowMinutes * pixelsPerMinute }]}>
                 <View style={styles.nowPill}>
                   <Text style={styles.nowPillText}>{toClockLabel(nowMinutes)}</Text>
@@ -261,7 +395,7 @@ const styles = StyleSheet.create({
     color: "#FF3B40",
   },
   timelineViewport: {
-    height: 260,
+    height: PREVIEW_VIEWPORT_HEIGHT,
   },
   timelineScrollContent: {
     paddingBottom: 72,

@@ -133,6 +133,41 @@ def resolve_event_category(
     return CATEGORY_APP_USAGE
 
 
+def resolve_entity_reference(
+    *,
+    event_type: str,
+    metadata: dict[str, object] | None = None,
+    explicit_entity_type: str | None = None,
+    explicit_entity_id: str | None = None,
+) -> tuple[str | None, str | None]:
+    if explicit_entity_type is not None or explicit_entity_id is not None:
+        return explicit_entity_type, explicit_entity_id
+
+    payload = metadata or {}
+    payload_entity_type = payload.get("entity_type")
+    payload_entity_id = payload.get("entity_id")
+    if isinstance(payload_entity_type, str):
+        resolved_id = payload_entity_id if isinstance(payload_entity_id, str) else None
+        return payload_entity_type, resolved_id
+
+    for key, inferred_type in (
+        ("activity_id", "activity"),
+        ("form_id", "form"),
+        ("session_id", "session"),
+    ):
+        value = payload.get(key)
+        if isinstance(value, str):
+            return inferred_type, value
+
+    if event_type.startswith("activity_"):
+        return "activity", None
+    if event_type.startswith("form_"):
+        return "form", None
+    if event_type.startswith("session_"):
+        return "session", None
+    return None, None
+
+
 def categorize_timeline_event(event: TimelineEvent) -> str:
     return resolve_event_category(
         event_type=event.event_type,
@@ -576,10 +611,24 @@ class NotificationService:
         title: str,
         body: str,
         metadata: dict[str, object] | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
     ) -> NotificationDelivery:
         self._get_patient_for_tenant(db, tenant_id=tenant_id, patient_id=patient_id)
         now = _utcnow()
         category = resolve_event_category(event_type=event_type)
+        resolved_entity_type, resolved_entity_id = resolve_entity_reference(
+            event_type=event_type,
+            metadata=metadata,
+            explicit_entity_type=entity_type,
+            explicit_entity_id=entity_id,
+        )
+        metadata_payload = dict(metadata or {})
+        if resolved_entity_type is not None and "entity_type" not in metadata_payload:
+            metadata_payload["entity_type"] = resolved_entity_type
+        if resolved_entity_id is not None and "entity_id" not in metadata_payload:
+            metadata_payload["entity_id"] = resolved_entity_id
+
         rule = self._resolve_effective_rule(
             db,
             tenant_id=tenant_id,
@@ -599,7 +648,7 @@ class NotificationService:
             channel_inbox=rule.inbox_enabled,
             channel_push=rule.push_enabled,
             channel_realtime=rule.realtime_enabled,
-            metadata_payload=metadata or {},
+            metadata_payload=metadata_payload,
             queued_at=now,
         )
         db.add(delivery)
@@ -685,6 +734,10 @@ class NotificationService:
                 status=delivery.status,
                 category=delivery.category,
                 event_type=event_type,
+                entity_type=resolved_entity_type,
+                entity_id=resolved_entity_id,
+                metadata=metadata_payload,
+                created_at=delivery.created_at,
             )
 
         delivery.status = NOTIFICATION_STATUS_DELIVERED

@@ -1,9 +1,15 @@
 export type PatientContactChannel = "whatsapp" | "email" | "phone";
-export type PatientContactPeriod = "morning" | "afternoon" | "night" | "flexible";
 export type PatientProfileSource = "manual" | "intake";
 export type PatientSortBy = "full_name" | "created_at" | "updated_at";
 export type SortOrder = "asc" | "desc";
 export type PatientChangeType = "created" | "updated" | "overwritten" | "archived";
+export type PatientOverviewBaselineItem = "yesterday" | "weekAgo" | "monthAgo";
+export type PatientOverviewKpiCardKey =
+  | "completed_sessions"
+  | "upcoming_sessions"
+  | "assigned_activities"
+  | "patient_journey_days";
+export type PatientOverviewTrendDirection = "up" | "down" | "flat" | "unknown";
 
 export interface PatientsApiErrorPayload {
   detail?: string;
@@ -33,7 +39,6 @@ export interface PatientDetail {
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
   preferredContactChannel: PatientContactChannel;
-  preferredContactPeriod: PatientContactPeriod | null;
   communicationNotes: string | null;
   profileSource: PatientProfileSource;
   whatsappNumberValid: boolean;
@@ -51,7 +56,6 @@ export interface PatientCreatePayload {
   emergencyContactName?: string;
   emergencyContactPhone?: string;
   preferredContactChannel?: PatientContactChannel;
-  preferredContactPeriod?: PatientContactPeriod;
   communicationNotes?: string;
 }
 
@@ -66,6 +70,8 @@ export interface ListPatientsOptions {
   hasWhatsapp?: boolean;
   sortBy?: PatientSortBy;
   sortOrder?: SortOrder;
+  limit?: number;
+  offset?: number;
 }
 
 export interface PatientChange {
@@ -76,19 +82,55 @@ export interface PatientChange {
   newData: Record<string, unknown> | null;
   changedByUserId: string | null;
   reason: string | null;
+  naturalSummary?: string;
   createdAt: string;
 }
 
 export interface PatientTimelineEvent {
   id: string;
   eventType: string;
+  categoryLabel?: string;
   actorType: string;
+  actorLabel?: string;
   actorId: string | null;
   payload: Record<string, unknown>;
+  naturalTitle?: string;
+  naturalEventLabel?: string;
+  naturalDetail?: string;
   createdAt: string;
 }
 
 export interface PatientArchiveResult {
   patientId: string;
   archivedAt: string;
+}
+
+export interface PatientOverviewKpiComparison {
+  item: PatientOverviewBaselineItem;
+  baselineValue: number | null;
+  deltaValue: number | null;
+  deltaPercent: number | null;
+  trend: PatientOverviewTrendDirection;
+  comparable: boolean;
+  missingBaseline: boolean;
+  windowStartAt: string;
+  windowEndAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface PatientOverviewKpiCard {
+  key: PatientOverviewKpiCardKey;
+  unit: "count";
+  currentValue: number | null;
+  windowStartAt: string;
+  windowEndAt: string;
+  comparisons: PatientOverviewKpiComparison[];
+  metadata: Record<string, unknown>;
+}
+
+export interface PatientOverviewKpis {
+  timezone: string;
+  generatedAt: string;
+  calculationVersion: "patient_overview_kpi_v1";
+  cards: PatientOverviewKpiCard[];
 }

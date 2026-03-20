@@ -1,136 +1,58 @@
-import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import { useEffect, useRef } from "react";
-import { Animated, Easing, StyleSheet, View } from "react-native";
+import { StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { appColors, navigationTheme } from "../../../shared/ui/navigationTheme";
-import { screenMotionContract } from "../../../shared/ui/screenMotionContract";
-
-function TabIcon({
-  focused,
-  name,
-  accentColor,
-}: {
-  focused: boolean;
-  name: keyof typeof Ionicons.glyphMap;
-  accentColor: string;
-}) {
-  const motionProgress = useRef(new Animated.Value(focused ? 1 : 0)).current;
-  const colorProgress = useRef(new Animated.Value(focused ? 1 : 0)).current;
-
-  useEffect(() => {
-    const motionAnimation = Animated.timing(motionProgress, {
-      toValue: focused ? 1 : 0,
-      duration: focused
-        ? screenMotionContract.tabIconFocusDurationMs
-        : screenMotionContract.tabIconBlurDurationMs,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    });
-    const colorAnimation = Animated.timing(colorProgress, {
-      toValue: focused ? 1 : 0,
-      duration: focused
-        ? screenMotionContract.tabIconFocusDurationMs
-        : screenMotionContract.tabIconBlurDurationMs,
-      easing: Easing.inOut(Easing.ease),
-      useNativeDriver: false,
-    });
-
-    motionAnimation.start();
-    colorAnimation.start();
-
-    return () => {
-      motionAnimation.stop();
-      colorAnimation.stop();
-    };
-  }, [focused, colorProgress, motionProgress]);
-
-  return (
-    <Animated.View
-      style={[
-        styles.iconWrap,
-        {
-          backgroundColor: colorProgress.interpolate({
-            inputRange: [0, 1],
-            outputRange: ["rgba(255,255,255,0)", `${accentColor}26`],
-          }),
-          shadowColor: accentColor,
-          shadowOpacity: colorProgress.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.08, 0.2],
-          }),
-          transform: [
-            {
-              translateY: motionProgress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0, -1.5],
-              }),
-            },
-            {
-              scale: motionProgress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 1.03],
-              }),
-            },
-          ],
-        },
-      ]}
-    >
-      <Animated.View
-        style={{
-          transform: [
-            {
-              translateY: motionProgress.interpolate({
-                inputRange: [0, 0.65, 1],
-                outputRange: [0, -2.5, -1.5],
-              }),
-            },
-            {
-              scale: motionProgress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 1.04],
-              }),
-            },
-          ],
-        }}
-      >
-        <Ionicons
-          name={name}
-          size={20}
-          color={focused ? accentColor : appColors.textMuted}
-          style={styles.iconGlyph}
-        />
-      </Animated.View>
-    </Animated.View>
-  );
-}
+import { useNotificationsStore } from "../../../features/notifications/hooks/useNotificationsStore";
+import {
+  BottomTabButton,
+  BottomTabIcon,
+  BottomTabLabel,
+} from "../../../shared/ui/BottomNavigation";
+import {
+  appColors,
+  createBottomTabBarStyle,
+  navigationTheme,
+} from "../../../shared/ui/navigationTheme";
 
 export default function PatientTabsLayout() {
+  const insets = useSafeAreaInsets();
+  const unreadCount = useNotificationsStore((state) => state.unreadCount);
+  const inboxBadgeCount = unreadCount > 0 ? unreadCount : undefined;
+
   return (
     <Tabs
       screenOptions={{
         headerShown: true,
         headerTitleAlign: "left",
+        lazy: false,
         headerStyle: navigationTheme.header,
         headerTitleStyle: navigationTheme.headerTitle,
         headerShadowVisible: false,
-        tabBarStyle: navigationTheme.tabBar,
-        tabBarLabelStyle: navigationTheme.tabBarLabel,
+        tabBarStyle: createBottomTabBarStyle(insets.bottom),
         tabBarItemStyle: [navigationTheme.tabBarItem, styles.tabItem],
+        // Regra 5: mantem fundo neutro e uma unica cor de destaque da marca.
         tabBarActiveTintColor: appColors.primary,
         tabBarInactiveTintColor: appColors.textMuted,
         tabBarHideOnKeyboard: true,
+        // Regra 9: feedback imediato de toque com ripple + scale sutil.
+        tabBarButton: (props) => <BottomTabButton {...props} />,
       }}
     >
+      {/* Regra 1: 5 abas principais, sem itens utilitarios/pouco frequentes na barra inferior. */}
       <Tabs.Screen
         name="sessoes"
         options={{
           title: "Sessoes",
           headerTitle: "Sessoes",
-          tabBarLabel: "Sessoes",
-          tabBarActiveTintColor: "#0369A1",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Sessoes" />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} name="calendar-outline" accentColor="#0369A1" />
+            <BottomTabIcon
+              focused={focused}
+              icons={{
+                outline: "calendar-outline",
+                filled: "calendar",
+              }}
+            />
           ),
         }}
       />
@@ -139,13 +61,14 @@ export default function PatientTabsLayout() {
         options={{
           title: "Atividades",
           headerTitle: "Atividades",
-          tabBarLabel: "Ativ.",
-          tabBarActiveTintColor: "#4338CA",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Ativ." />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon
+            <BottomTabIcon
               focused={focused}
-              name="checkmark-done-outline"
-              accentColor="#4338CA"
+              icons={{
+                outline: "checkmark-done-outline",
+                filled: "checkmark-done",
+              }}
             />
           ),
         }}
@@ -155,13 +78,14 @@ export default function PatientTabsLayout() {
         options={{
           title: "Formularios",
           headerTitle: "Formularios",
-          tabBarLabel: "Forms",
-          tabBarActiveTintColor: "#7C3AED",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Forms" />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon
+            <BottomTabIcon
               focused={focused}
-              name="document-text-outline"
-              accentColor="#7C3AED"
+              icons={{
+                outline: "document-text-outline",
+                filled: "document-text",
+              }}
             />
           ),
         }}
@@ -171,10 +95,17 @@ export default function PatientTabsLayout() {
         options={{
           title: "Inbox",
           headerTitle: "Inbox de Notificacoes",
-          tabBarLabel: "Inbox",
-          tabBarActiveTintColor: "#0F766E",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Inbox" />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} name="mail-outline" accentColor="#0F766E" />
+            // Regra 7: badge ligado ao contador de notificacoes nao lidas.
+            <BottomTabIcon
+              focused={focused}
+              badgeCount={inboxBadgeCount}
+              icons={{
+                outline: "mail-outline",
+                filled: "mail",
+              }}
+            />
           ),
         }}
       />
@@ -183,10 +114,15 @@ export default function PatientTabsLayout() {
         options={{
           title: "Preferencias",
           headerTitle: "Preferencias de Notificacao",
-          tabBarLabel: "Prefer.",
-          tabBarActiveTintColor: "#B54708",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Ajustes" />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} name="settings-outline" accentColor="#B54708" />
+            <BottomTabIcon
+              focused={focused}
+              icons={{
+                outline: "settings-outline",
+                filled: "settings",
+              }}
+            />
           ),
         }}
       />
@@ -207,22 +143,6 @@ const styles = StyleSheet.create({
   tabItem: {
     flex: 1,
     minWidth: 0,
-  },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowOpacity: 0.12,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  iconGlyph: {
-    textShadowColor: "rgba(15, 23, 42, 0.26)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
   hiddenTabBar: {
     display: "none",

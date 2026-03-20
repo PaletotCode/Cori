@@ -27,6 +27,7 @@ import { toDateKeyFromDate, toDateKeyFromIso } from "../../sessions/components/a
 import { createActivitiesApiClient } from "../../activities/api/activitiesApiClient";
 import type { ActivityItem } from "../../activities/api/types";
 import { useAuthStore } from "../../auth/hooks/useAuthStore";
+import { authStore } from "../../auth/store/authStore";
 import { psychologistRoutes } from "../../navigation/guards";
 import { PanelAgendaDayPreview } from "../components/PanelAgendaDayPreview";
 import {
@@ -131,6 +132,18 @@ function createPanelRequestAbortedError(): Error {
 
 function isPanelRequestAbortedError(error: unknown): boolean {
   return error instanceof Error && error.name === PANEL_REQUEST_ABORTED_ERROR_NAME;
+}
+
+function isTokenInvalidMessage(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const normalized = error.message.toLowerCase();
+  return (
+    normalized.includes("token invalido") ||
+    normalized.includes("token inválido") ||
+    normalized.includes("unauthorized")
+  );
 }
 
 function createDefaultPreferences(): Record<KpiCardId, CardPreferences> {
@@ -749,6 +762,36 @@ export function PsychologistSessionScreen() {
     );
   }, []);
 
+  const runWithTokenRetry = useCallback(
+    async <TResult,>(operation: (token: string) => Promise<TResult>): Promise<TResult> => {
+      if (accessToken === null) {
+        throw new Error("Sessao expirada. Entre novamente.");
+      }
+
+      try {
+        return await operation(accessToken);
+      } catch (requestError) {
+        if (!isTokenInvalidMessage(requestError)) {
+          throw requestError;
+        }
+
+        try {
+          await authStore.actions.refreshSession();
+        } catch {
+          await authStore.actions.logout();
+          throw new Error("Sessao expirada. Entre novamente para carregar o painel.");
+        }
+
+        const refreshedToken = authStore.getState().tokens?.accessToken ?? null;
+        if (refreshedToken === null) {
+          throw new Error("Sessao expirada. Entre novamente para carregar o painel.");
+        }
+        return operation(refreshedToken);
+      }
+    },
+    [accessToken],
+  );
+
   const updateCardPreferences = useCallback(
     (cardId: KpiCardId, updater: (current: CardPreferences) => CardPreferences) => {
       setCardPreferences((currentState) => ({
@@ -813,8 +856,12 @@ export function PsychologistSessionScreen() {
 
     try {
       const [today, week] = await Promise.all([
-        sessionsApiClient.listAgenda(accessToken, { view: "day", referenceDate }),
-        sessionsApiClient.listAgenda(accessToken, { view: "week", referenceDate }),
+        runWithTokenRetry((token) =>
+          sessionsApiClient.listAgenda(token, { view: "day", referenceDate }),
+        ),
+        runWithTokenRetry((token) =>
+          sessionsApiClient.listAgenda(token, { view: "week", referenceDate }),
+        ),
       ]);
       assertRequestActive();
 
@@ -822,13 +869,15 @@ export function PsychologistSessionScreen() {
       assertRequestActive();
 
       const [activitiesResult, profileResult] = await Promise.allSettled([
-        activitiesApiClient.listActivities(accessToken, { limit: 200 }),
-        practiceProfileApiClient.get(accessToken).catch((error) => {
-          if (error instanceof PracticeProfileApiError && error.statusCode === 404) {
-            return null;
-          }
-          throw error;
-        }),
+        runWithTokenRetry((token) => activitiesApiClient.listActivities(token, { limit: 200 })),
+        runWithTokenRetry((token) =>
+          practiceProfileApiClient.get(token).catch((error) => {
+            if (error instanceof PracticeProfileApiError && error.statusCode === 404) {
+              return null;
+            }
+            throw error;
+          }),
+        ),
       ]);
       assertRequestActive();
 
@@ -846,30 +895,42 @@ export function PsychologistSessionScreen() {
       try {
         const [yesterdayDay, weekAgoDay, monthAgoDay, yesterdayWeek, weekAgoWeek, monthAgoWeek] =
           await Promise.all([
-            sessionsApiClient.listAgenda(accessToken, {
-              view: "day",
-              referenceDate: referenceYesterday,
-            }),
-            sessionsApiClient.listAgenda(accessToken, {
-              view: "day",
-              referenceDate: referenceWeekAgo,
-            }),
-            sessionsApiClient.listAgenda(accessToken, {
-              view: "day",
-              referenceDate: referenceMonthAgo,
-            }),
-            sessionsApiClient.listAgenda(accessToken, {
-              view: "week",
-              referenceDate: referenceYesterday,
-            }),
-            sessionsApiClient.listAgenda(accessToken, {
-              view: "week",
-              referenceDate: referenceWeekAgo,
-            }),
-            sessionsApiClient.listAgenda(accessToken, {
-              view: "week",
-              referenceDate: referenceMonthAgo,
-            }),
+            runWithTokenRetry((token) =>
+              sessionsApiClient.listAgenda(token, {
+                view: "day",
+                referenceDate: referenceYesterday,
+              }),
+            ),
+            runWithTokenRetry((token) =>
+              sessionsApiClient.listAgenda(token, {
+                view: "day",
+                referenceDate: referenceWeekAgo,
+              }),
+            ),
+            runWithTokenRetry((token) =>
+              sessionsApiClient.listAgenda(token, {
+                view: "day",
+                referenceDate: referenceMonthAgo,
+              }),
+            ),
+            runWithTokenRetry((token) =>
+              sessionsApiClient.listAgenda(token, {
+                view: "week",
+                referenceDate: referenceYesterday,
+              }),
+            ),
+            runWithTokenRetry((token) =>
+              sessionsApiClient.listAgenda(token, {
+                view: "week",
+                referenceDate: referenceWeekAgo,
+              }),
+            ),
+            runWithTokenRetry((token) =>
+              sessionsApiClient.listAgenda(token, {
+                view: "week",
+                referenceDate: referenceMonthAgo,
+              }),
+            ),
           ]);
         assertRequestActive();
 
@@ -904,7 +965,7 @@ export function PsychologistSessionScreen() {
         setLoadingSummary(false);
       }
     }
-  }, [accessToken, sortSessionsOnRuntime]);
+  }, [accessToken, runWithTokenRetry, sortSessionsOnRuntime]);
 
   useEffect(() => {
     if (!hasLoadedSummary) {

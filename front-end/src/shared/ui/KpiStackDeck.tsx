@@ -412,12 +412,40 @@ export function KpiStackDeck<CardId extends string = string>({
   const FRONT_EXIT_X = 84;
 
   const [frontCardIndex, setFrontCardIndex] = useState<0 | 1>(0);
+  const [pendingCardIndex, setPendingCardIndex] = useState<0 | 1 | null>(null);
   const [swapDirection, setSwapDirection] = useState<-1 | 1>(-1);
   const frontExitMotion = useRef(new Animated.Value(0)).current;
   const backEnterMotion = useRef(new Animated.Value(0)).current;
   const dragMotion = useRef(new Animated.Value(0)).current;
   const isAnimatingRef = useRef(false);
   const isDraggingRef = useRef(false);
+  const resetFrameRef = useRef<number | null>(null);
+
+  const resetDeckMotions = useCallback(() => {
+    frontExitMotion.setValue(0);
+    backEnterMotion.setValue(0);
+    dragMotion.setValue(0);
+  }, [backEnterMotion, dragMotion, frontExitMotion]);
+
+  const scheduleResetAfterSwap = useCallback(() => {
+    if (resetFrameRef.current !== null) {
+      cancelAnimationFrame(resetFrameRef.current);
+    }
+    resetFrameRef.current = requestAnimationFrame(() => {
+      resetFrameRef.current = requestAnimationFrame(() => {
+        resetDeckMotions();
+        resetFrameRef.current = null;
+      });
+    });
+  }, [resetDeckMotions]);
+
+  useEffect(() => {
+    return () => {
+      if (resetFrameRef.current !== null) {
+        cancelAnimationFrame(resetFrameRef.current);
+      }
+    };
+  }, []);
 
   const triggerSwap = useCallback(
     (direction: -1 | 1, dragDxAtRelease = 0) => {
@@ -425,9 +453,11 @@ export function KpiStackDeck<CardId extends string = string>({
         return;
       }
 
+      const nextCardIndex: 0 | 1 = frontCardIndex === 0 ? 1 : 0;
       isAnimatingRef.current = true;
       isDraggingRef.current = false;
       setSwapDirection(direction);
+      setPendingCardIndex(nextCardIndex);
 
       const clampedDragDx = Math.max(-MAX_DRAG_DX, Math.min(MAX_DRAG_DX, dragDxAtRelease));
       const releaseCardOffsetX = clampedDragDx / DRAG_TO_CARD_X_DIVISOR;
@@ -437,6 +467,10 @@ export function KpiStackDeck<CardId extends string = string>({
       frontExitMotion.stopAnimation();
       backEnterMotion.stopAnimation();
       dragMotion.stopAnimation();
+      if (resetFrameRef.current !== null) {
+        cancelAnimationFrame(resetFrameRef.current);
+        resetFrameRef.current = null;
+      }
       dragMotion.setValue(0);
       frontExitMotion.setValue(startProgress);
       backEnterMotion.setValue(0);
@@ -455,16 +489,17 @@ export function KpiStackDeck<CardId extends string = string>({
           useNativeDriver: true,
         }),
       ]).start(({ finished }) => {
-        frontExitMotion.setValue(0);
-        backEnterMotion.setValue(0);
-        dragMotion.setValue(0);
         isAnimatingRef.current = false;
 
         if (!finished) {
+          setPendingCardIndex(null);
+          resetDeckMotions();
           return;
         }
 
-        setFrontCardIndex((current) => (current === 0 ? 1 : 0));
+        setFrontCardIndex(nextCardIndex);
+        setPendingCardIndex(null);
+        scheduleResetAfterSwap();
       });
     },
     [
@@ -473,11 +508,22 @@ export function KpiStackDeck<CardId extends string = string>({
       DRAG_TO_CARD_X_DIVISOR,
       backEnterMotion,
       dragMotion,
+      frontCardIndex,
       frontExitMotion,
+      resetDeckMotions,
+      scheduleResetAfterSwap,
     ],
   );
 
+  const activeDeckPreferences =
+    frontCardIndex === 0 ? primaryPreferences : secondaryPreferences;
+  const shouldAutoplayDeck =
+    activeDeckPreferences.carouselEnabled && activeDeckPreferences.mode === "dynamic";
+
   useEffect(() => {
+    if (!shouldAutoplayDeck) {
+      return;
+    }
     const intervalId = setInterval(() => {
       if (isDraggingRef.current || isAnimatingRef.current) {
         return;
@@ -488,7 +534,7 @@ export function KpiStackDeck<CardId extends string = string>({
     return () => {
       clearInterval(intervalId);
     };
-  }, [autoSwapMs, triggerSwap]);
+  }, [autoSwapMs, shouldAutoplayDeck, triggerSwap]);
 
   const panResponder = useMemo(
     () =>
@@ -556,9 +602,10 @@ export function KpiStackDeck<CardId extends string = string>({
   );
 
   const frontDefinition = frontCardIndex === 0 ? primaryDefinition : secondaryDefinition;
-  const backDefinition = frontCardIndex === 0 ? secondaryDefinition : primaryDefinition;
-  const frontPreferences = frontCardIndex === 0 ? primaryPreferences : secondaryPreferences;
-  const backPreferences = frontCardIndex === 0 ? secondaryPreferences : primaryPreferences;
+  const frontPreferences = activeDeckPreferences;
+  const backDefinition = pendingCardIndex === 0 ? primaryDefinition : secondaryDefinition;
+  const backPreferences = pendingCardIndex === 0 ? primaryPreferences : secondaryPreferences;
+  const isSwapActive = pendingCardIndex !== null;
 
   const frontCardStyle = {
     transform: [
@@ -645,9 +692,14 @@ export function KpiStackDeck<CardId extends string = string>({
     <View style={[styles.kpiDeckWrap, deckStyle]} {...panResponder.panHandlers}>
       <Animated.View
         pointerEvents="auto"
-        style={[styles.kpiDeckLayer, styles.kpiDeckFrontLayer, frontCardStyle]}
+        style={[
+          styles.kpiDeckLayer,
+          styles.kpiDeckFrontLayer,
+          isSwapActive ? frontCardStyle : null,
+        ]}
       >
         <KpiDeckCard
+          key={`front-${String(frontDefinition.id)}`}
           definition={frontDefinition}
           preferences={frontPreferences}
           loading={loading}
@@ -657,23 +709,26 @@ export function KpiStackDeck<CardId extends string = string>({
         />
       </Animated.View>
 
-      <Animated.View
-        pointerEvents="none"
-        style={[styles.kpiDeckLayer, styles.kpiDeckBackLayer, backCardStyle]}
-      >
-        <KpiDeckCard
-          definition={backDefinition}
-          preferences={backPreferences}
-          loading={loading}
-          comparisonError={comparisonError}
-          onPressCard={onPressCard}
-          cardStyle={[styles.kpiDeckCard, cardStyle]}
-        />
+      {isSwapActive ? (
         <Animated.View
           pointerEvents="none"
-          style={[styles.kpiDeckBackContentMask, { opacity: backMaskOpacity }]}
-        />
-      </Animated.View>
+          style={[styles.kpiDeckLayer, styles.kpiDeckBackLayer, backCardStyle]}
+        >
+          <KpiDeckCard
+            key={`back-${String(backDefinition.id)}`}
+            definition={backDefinition}
+            preferences={backPreferences}
+            loading={loading}
+            comparisonError={comparisonError}
+            onPressCard={onPressCard}
+            cardStyle={[styles.kpiDeckCard, cardStyle]}
+          />
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.kpiDeckBackContentMask, { opacity: backMaskOpacity }]}
+          />
+        </Animated.View>
+      ) : null}
     </View>
   );
 }

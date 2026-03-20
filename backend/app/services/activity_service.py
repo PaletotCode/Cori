@@ -19,6 +19,7 @@ from app.schemas.activity import (
 )
 from app.services.timeline_service import append_timeline_event
 
+ACTIVITY_STATUS_SCHEDULED = "scheduled"
 ACTIVITY_STATUS_ASSIGNED = "assigned"
 ACTIVITY_STATUS_OPENED = "opened"
 ACTIVITY_STATUS_IN_PROGRESS = "in_progress"
@@ -704,7 +705,9 @@ class ActivityService:
                 select(Activity).where(
                     Activity.tenant_id == anchor.tenant_id,
                     Activity.patient_id == anchor.patient_id,
-                    Activity.status != ACTIVITY_STATUS_CANCELED,
+                    Activity.status.notin_(
+                        [ACTIVITY_STATUS_CANCELED, ACTIVITY_STATUS_SCHEDULED]
+                    ),
                 ).order_by(Activity.due_at.asc(), Activity.created_at.desc())
             ).all()
         )

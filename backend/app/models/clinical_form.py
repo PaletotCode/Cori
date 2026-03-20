@@ -48,6 +48,12 @@ class ClinicalForm(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    source_template_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("form_templates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     title: Mapped[str] = mapped_column(String(180), nullable=False)
     subtitle: Mapped[str | None] = mapped_column(String(300), nullable=True)
     header: Mapped[str | None] = mapped_column(String(1500), nullable=True)
@@ -79,4 +85,5 @@ class ClinicalForm(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tenant = relationship("Tenant", back_populates="clinical_forms")
     patient = relationship("Patient", back_populates="clinical_forms")
     psychologist = relationship("Psychologist", back_populates="clinical_forms")
+    source_template = relationship("FormTemplate", back_populates="forms")
     timeline_events = relationship("TimelineEvent", back_populates="clinical_form")

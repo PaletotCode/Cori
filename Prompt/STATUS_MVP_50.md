@@ -25,3 +25,9 @@ Ao concluir cada prompt:
 
 - Percentual entregue no alvo desta fase: `50%`
 - Estado: `FECHADO (Prompt 10 concluido)`
+
+## Extensoes Pos-50%
+
+| Rodada | Meta | Status | Evidencia principal |
+|---|---|---|---|
+| Extra 01 | Templates desacoplados + atribuicao realtime segura + idempotencia | CONCLUIDO | `backend/alembic/versions/20260318_0010_templates_assignment_realtime.py`, `backend/app/api/routes_activity_templates.py`, `backend/app/api/routes_form_templates.py`, `backend/app/services/template_assignment_service.py`, `backend/app/services/realtime_hub.py`, `docs/realtime_patient_event_contract.md`, `backend/artifacts/realtime_two_clients_probe.json` |

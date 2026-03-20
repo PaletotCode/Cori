@@ -12,6 +12,7 @@ interface AgendaHeaderActionsProps {
   mode: AppleCalendarMode;
   onToday: () => void;
   onOpenCreate: () => void;
+  onOpenDayView: () => void;
   onToggleScope: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -19,7 +20,6 @@ interface AgendaHeaderActionsProps {
 }
 
 const modeOptions: Array<{ mode: AppleCalendarMode; label: string }> = [
-  { mode: "compact", label: "Compacto" },
   { mode: "stack", label: "Empilhado" },
   { mode: "details", label: "Detalhes" },
   { mode: "list", label: "Lista" },
@@ -30,6 +30,7 @@ export function AgendaHeaderActions({
   mode,
   onToday,
   onOpenCreate,
+  onOpenDayView,
   onToggleScope,
   onPrev,
   onNext,
@@ -69,7 +70,13 @@ export function AgendaHeaderActions({
               }}
               style={styles.menuItem}
             >
-              <Text style={styles.menuItemLabel}>{scope === "year" ? "Trocar para mes" : "Trocar para ano"}</Text>
+              <Text style={styles.menuItemLabel}>
+                {scope === "year"
+                  ? "Trocar para mes"
+                  : scope === "month"
+                    ? "Trocar para ano"
+                    : "Voltar para visualizacao anterior"}
+              </Text>
             </Pressable>
 
             <Pressable
@@ -80,7 +87,9 @@ export function AgendaHeaderActions({
               }}
               style={styles.menuItem}
             >
-              <Text style={styles.menuItemLabel}>{scope === "year" ? "Ano anterior" : "Mes anterior"}</Text>
+              <Text style={styles.menuItemLabel}>
+                {scope === "year" ? "Ano anterior" : "Mes anterior"}
+              </Text>
             </Pressable>
 
             <Pressable
@@ -91,7 +100,24 @@ export function AgendaHeaderActions({
               }}
               style={styles.menuItem}
             >
-              <Text style={styles.menuItemLabel}>{scope === "year" ? "Proximo ano" : "Proximo mes"}</Text>
+              <Text style={styles.menuItemLabel}>
+                {scope === "year" ? "Proximo ano" : "Proximo mes"}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                onOpenDayView();
+                setMenuVisible(false);
+              }}
+              style={styles.menuItem}
+            >
+              <Text
+                style={[styles.menuItemLabel, scope === "day" ? styles.menuItemLabelActive : null]}
+              >
+                Visualizar dia
+              </Text>
             </Pressable>
 
             <View style={styles.divider} />

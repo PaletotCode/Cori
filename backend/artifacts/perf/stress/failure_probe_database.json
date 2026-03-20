@@ -1,0 +1,79 @@
+{
+  "probe": "database_recovery",
+  "started_at_utc": "2026-03-19T00:09:58.333872+00:00",
+  "health_before": {
+    "http_status": 200,
+    "payload": {
+      "status": "ok",
+      "timestamp_utc": "2026-03-19T00:09:56.762397Z",
+      "dependencies": {
+        "database": "ok",
+        "redis": "ok"
+      }
+    }
+  },
+  "stop_database": {
+    "cmd": "docker stop cori-postgres",
+    "returncode": 0,
+    "stdout": "cori-postgres",
+    "stderr": "",
+    "duration_ms": 285.086500000034
+  },
+  "wait_degraded": {
+    "matched": true,
+    "attempts": [
+      {
+        "http_status": 503,
+        "payload": {
+          "status": "degraded",
+          "timestamp_utc": "2026-03-19T00:09:57.071964Z",
+          "dependencies": {
+            "database": "down",
+            "redis": "ok"
+          }
+        }
+      }
+    ],
+    "elapsed_seconds": 0.02422416699846508
+  },
+  "start_database": {
+    "cmd": "docker start cori-postgres",
+    "returncode": 0,
+    "stdout": "cori-postgres",
+    "stderr": "",
+    "duration_ms": 92.83179100020789
+  },
+  "wait_recovered": {
+    "matched": true,
+    "attempts": [
+      {
+        "http_status": 503,
+        "payload": {
+          "status": "degraded",
+          "timestamp_utc": "2026-03-19T00:09:57.180696Z",
+          "dependencies": {
+            "database": "down",
+            "redis": "ok"
+          }
+        }
+      },
+      {
+        "http_status": 200,
+        "payload": {
+          "status": "ok",
+          "timestamp_utc": "2026-03-19T00:09:58.239016Z",
+          "dependencies": {
+            "database": "ok",
+            "redis": "ok"
+          }
+        }
+      }
+    ],
+    "elapsed_seconds": 1.0748677920055343
+  },
+  "auth_after_recovery": {
+    "http_status": 200,
+    "ok": true
+  },
+  "success": true
+}

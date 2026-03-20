@@ -1,0 +1,77 @@
+{
+  "probe": "worker_recovery",
+  "started_at_utc": "2026-03-19T00:09:40.918830+00:00",
+  "job_id": "5ab0546c76bb4cd5a4788f4769b69806",
+  "job_replayed": false,
+  "depth_before": {
+    "ready": 0,
+    "processing": 0,
+    "retry": 0,
+    "dead": 0
+  },
+  "stop_worker": {
+    "cmd": "docker stop cori-worker",
+    "returncode": 0,
+    "stdout": "cori-worker",
+    "stderr": "",
+    "duration_ms": 1163.6726669967175
+  },
+  "depth_while_down": {
+    "ready": 1,
+    "processing": 0,
+    "retry": 0,
+    "dead": 0
+  },
+  "presence_while_down": {
+    "ready": true,
+    "processing": false,
+    "retry": false,
+    "dead": false
+  },
+  "start_worker": {
+    "cmd": "docker start cori-worker",
+    "returncode": 0,
+    "stdout": "cori-worker",
+    "stderr": "",
+    "duration_ms": 136.8937500010361
+  },
+  "observed_states": [
+    {
+      "at_utc": "2026-03-19T00:09:38.907790+00:00",
+      "presence": {
+        "ready": true,
+        "processing": false,
+        "retry": false,
+        "dead": false
+      },
+      "depth": {
+        "ready": 1,
+        "processing": 0,
+        "retry": 0,
+        "dead": 0
+      }
+    },
+    {
+      "at_utc": "2026-03-19T00:09:40.917399+00:00",
+      "presence": {
+        "ready": false,
+        "processing": false,
+        "retry": false,
+        "dead": false
+      },
+      "depth": {
+        "ready": 0,
+        "processing": 0,
+        "retry": 0,
+        "dead": 0
+      }
+    }
+  ],
+  "depth_after": {
+    "ready": 0,
+    "processing": 0,
+    "retry": 0,
+    "dead": 0
+  },
+  "recovered": true
+}

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { typographyContract } from "../../../../shared/ui/typography";
@@ -20,9 +20,126 @@ interface AgendaMonthViewProps {
   todayDateKey: string;
   eventsByDate: ReadonlyMap<string, AgendaCalendarEvent[]>;
   onSelectDate: (dateKey: string) => void;
+  onOpenDayView: (dateKey: string) => void;
 }
 
 const LIST_PAGE_SIZE = 10;
+const EMPTY_DAY_EVENTS: AgendaCalendarEvent[] = [];
+
+type MonthDayCellVariant = "default" | "details" | "stack";
+
+interface MonthDayCellProps {
+  cell: MonthMatrixCell;
+  isSelected: boolean;
+  isTodayHighlight: boolean;
+  events: AgendaCalendarEvent[];
+  mode: AppleCalendarMode;
+  variant: MonthDayCellVariant;
+  onSelectDate: (dateKey: string) => void;
+}
+
+const MonthDayCell = memo(
+  function MonthDayCellComponent({
+    cell,
+    isSelected,
+    isTodayHighlight,
+    events,
+    mode,
+    variant,
+    onSelectDate,
+  }: MonthDayCellProps) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => onSelectDate(cell.dateKey)}
+        style={[
+          styles.dayCell,
+          variant === "details" ? styles.dayCellDetails : null,
+          variant === "stack" ? styles.dayCellStack : null,
+        ]}
+      >
+        <View
+          style={[
+            styles.dayBadge,
+            isSelected && !isTodayHighlight ? styles.dayBadgeSelected : null,
+            isTodayHighlight ? styles.dayBadgeToday : null,
+          ]}
+        >
+          <Text
+            style={[
+              styles.dayLabel,
+              !cell.inCurrentMonth ? styles.dayLabelOutside : null,
+              isTodayHighlight ? styles.dayLabelSelected : null,
+            ]}
+          >
+            {cell.day}
+          </Text>
+        </View>
+
+        <EventPreview mode={mode} events={events} />
+      </Pressable>
+    );
+  },
+  (previous, next) =>
+    previous.cell.dateKey === next.cell.dateKey &&
+    previous.cell.day === next.cell.day &&
+    previous.cell.inCurrentMonth === next.cell.inCurrentMonth &&
+    previous.isSelected === next.isSelected &&
+    previous.isTodayHighlight === next.isTodayHighlight &&
+    previous.mode === next.mode &&
+    previous.variant === next.variant &&
+    previous.events === next.events &&
+    previous.onSelectDate === next.onSelectDate,
+);
+
+const EventPreview = memo(
+  function EventPreviewComponent({
+    mode,
+    events,
+  }: {
+    mode: AppleCalendarMode;
+    events: AgendaCalendarEvent[];
+  }) {
+    if (events.length === 0) {
+      return <View style={styles.eventSlotEmpty} />;
+    }
+
+    if (mode === "list") {
+      return (
+        <View style={styles.dotRow}>
+          {events.slice(0, 3).map((event) => (
+            <View key={`dot-${event.id}`} style={[styles.dot, { backgroundColor: event.color }]} />
+          ))}
+          {events.length > 3 ? <Text style={styles.moreLabel}>+</Text> : null}
+        </View>
+      );
+    }
+
+    if (mode === "stack") {
+      return (
+        <View style={styles.stackBarWrap}>
+          {events.slice(0, 2).map((event) => (
+            <View key={`stack-${event.id}`} style={[styles.stackBar, { backgroundColor: event.color }]} />
+          ))}
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.detailsEventWrap}>
+        {events.slice(0, 2).map((event) => (
+          <View key={`detail-${event.id}`} style={[styles.detailsPill, { backgroundColor: `${event.color}30` }]}>
+            <Text numberOfLines={1} style={[styles.detailsPillText, { color: event.color }]}>
+              {event.title}
+            </Text>
+          </View>
+        ))}
+        {events.length > 2 ? <Text style={styles.moreLabel}>+{events.length - 2}</Text> : null}
+      </View>
+    );
+  },
+  (previous, next) => previous.mode === next.mode && previous.events === next.events,
+);
 
 function AgendaMonthViewComponent({
   monthDate,
@@ -31,6 +148,7 @@ function AgendaMonthViewComponent({
   todayDateKey,
   eventsByDate,
   onSelectDate,
+  onOpenDayView,
 }: AgendaMonthViewProps) {
   const monthMatrix = useMemo(() => buildMonthMatrix(monthDate), [monthDate]);
   const weeks = useMemo(() => splitIntoWeeks(monthMatrix), [monthMatrix]);
@@ -43,10 +161,11 @@ function AgendaMonthViewComponent({
   }, [mode, monthDate]);
 
   const selectedDateEvents = useMemo(
-    () => eventsByDate.get(selectedDateKey) ?? [],
+    () => eventsByDate.get(selectedDateKey) ?? EMPTY_DAY_EVENTS,
     [eventsByDate, selectedDateKey],
   );
   const [listPage, setListPage] = useState(1);
+  const lastTapRef = useRef<{ dateKey: string; at: number } | null>(null);
 
   useEffect(() => {
     setListPage(1);
@@ -66,6 +185,22 @@ function AgendaMonthViewComponent({
     return selectedDateEvents.slice(start, start + LIST_PAGE_SIZE);
   }, [normalizedListPage, selectedDateEvents]);
 
+  const handleDayPress = useCallback(
+    (dateKey: string) => {
+      const now = Date.now();
+      const lastTap = lastTapRef.current;
+      if (lastTap !== null && lastTap.dateKey === dateKey && now - lastTap.at <= 320) {
+        onSelectDate(dateKey);
+        onOpenDayView(dateKey);
+        lastTapRef.current = null;
+        return;
+      }
+      lastTapRef.current = { dateKey, at: now };
+      onSelectDate(dateKey);
+    },
+    [onOpenDayView, onSelectDate],
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.weekdayRow}>
@@ -83,39 +218,21 @@ function AgendaMonthViewComponent({
               const isSelected = cell.dateKey === selectedDateKey;
               const isToday = cell.dateKey === todayDateKey;
               const isTodayHighlight = cell.inCurrentMonth && isToday;
-              const events = eventsByDate.get(cell.dateKey) ?? [];
+              const events = eventsByDate.get(cell.dateKey) ?? EMPTY_DAY_EVENTS;
+              const variant: MonthDayCellVariant =
+                mode === "details" ? "details" : mode === "stack" ? "stack" : "default";
 
               return (
-                <Pressable
-                  accessibilityRole="button"
+                <MonthDayCell
                   key={cell.dateKey}
-                  onPress={() => onSelectDate(cell.dateKey)}
-                  style={[
-                    styles.dayCell,
-                    mode === "details" ? styles.dayCellDetails : null,
-                    mode === "stack" ? styles.dayCellStack : null,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.dayBadge,
-                      isSelected && !isTodayHighlight ? styles.dayBadgeSelected : null,
-                      isTodayHighlight ? styles.dayBadgeToday : null,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.dayLabel,
-                        !cell.inCurrentMonth ? styles.dayLabelOutside : null,
-                        isTodayHighlight ? styles.dayLabelSelected : null,
-                      ]}
-                    >
-                      {cell.day}
-                    </Text>
-                  </View>
-
-                  <EventPreview mode={mode} events={events} />
-                </Pressable>
+                  cell={cell}
+                  isSelected={isSelected}
+                  isTodayHighlight={isTodayHighlight}
+                  events={events}
+                  mode={mode}
+                  variant={variant}
+                  onSelectDate={handleDayPress}
+                />
               );
             })}
           </View>
@@ -131,33 +248,18 @@ function AgendaMonthViewComponent({
                 const isSelected = cell.dateKey === selectedDateKey;
                 const isToday = cell.dateKey === todayDateKey;
                 const isTodayHighlight = cell.inCurrentMonth && isToday;
-                const events = eventsByDate.get(cell.dateKey) ?? [];
+                const events = eventsByDate.get(cell.dateKey) ?? EMPTY_DAY_EVENTS;
                 return (
-                  <Pressable
-                    accessibilityRole="button"
+                  <MonthDayCell
                     key={`next-${cell.dateKey}`}
-                    onPress={() => onSelectDate(cell.dateKey)}
-                    style={[styles.dayCell, styles.dayCellStack]}
-                  >
-                    <View
-                      style={[
-                        styles.dayBadge,
-                        isSelected && !isTodayHighlight ? styles.dayBadgeSelected : null,
-                        isTodayHighlight ? styles.dayBadgeToday : null,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.dayLabel,
-                          !cell.inCurrentMonth ? styles.dayLabelOutside : null,
-                          isTodayHighlight ? styles.dayLabelSelected : null,
-                        ]}
-                      >
-                        {cell.day}
-                      </Text>
-                    </View>
-                    <EventPreview mode={mode} events={events} />
-                  </Pressable>
+                    cell={cell}
+                    isSelected={isSelected}
+                    isTodayHighlight={isTodayHighlight}
+                    events={events}
+                    mode={mode}
+                    variant="stack"
+                    onSelectDate={handleDayPress}
+                  />
                 );
               })}
             </View>
@@ -224,46 +326,6 @@ function AgendaMonthViewComponent({
           )}
         </View>
       ) : null}
-    </View>
-  );
-}
-
-function EventPreview({ mode, events }: { mode: AppleCalendarMode; events: AgendaCalendarEvent[] }) {
-  if (events.length === 0) {
-    return <View style={styles.eventSlotEmpty} />;
-  }
-
-  if (mode === "compact" || mode === "list") {
-    return (
-      <View style={styles.dotRow}>
-        {events.slice(0, 3).map((event) => (
-          <View key={`dot-${event.id}`} style={[styles.dot, { backgroundColor: event.color }]} />
-        ))}
-        {events.length > 3 ? <Text style={styles.moreLabel}>+</Text> : null}
-      </View>
-    );
-  }
-
-  if (mode === "stack") {
-    return (
-      <View style={styles.stackBarWrap}>
-        {events.slice(0, 2).map((event) => (
-          <View key={`stack-${event.id}`} style={[styles.stackBar, { backgroundColor: event.color }]} />
-        ))}
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.detailsEventWrap}>
-      {events.slice(0, 2).map((event) => (
-        <View key={`detail-${event.id}`} style={[styles.detailsPill, { backgroundColor: `${event.color}30` }]}>
-          <Text numberOfLines={1} style={[styles.detailsPillText, { color: event.color }]}>
-            {event.title}
-          </Text>
-        </View>
-      ))}
-      {events.length > 2 ? <Text style={styles.moreLabel}>+{events.length - 2}</Text> : null}
     </View>
   );
 }

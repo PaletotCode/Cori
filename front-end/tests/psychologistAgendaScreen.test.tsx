@@ -43,12 +43,14 @@ jest.mock("../src/features/notifications/hooks/useNotificationsStore", () => ({
 }));
 
 jest.mock("react-native", () => {
-  const React = require("react");
+  const ReactRuntime = jest.requireActual("react") as typeof import("react");
 
-  const makeComponent =
-    (name: string) =>
-    (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-      React.createElement(name, props, props.children);
+  const makeComponent = (name: string) => {
+    const MockComponent = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+      ReactRuntime.createElement(name, props, props.children);
+    MockComponent.displayName = name;
+    return MockComponent;
+  };
 
   class AnimatedValue {
     private value: number;
@@ -94,6 +96,7 @@ jest.mock("react-native", () => {
     },
     Text: makeComponent("Text"),
     TextInput: makeComponent("TextInput"),
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
     View: makeComponent("View"),
   };
 });
@@ -174,6 +177,7 @@ describe("psychologist agenda screen", () => {
     const activityTemplatesClient: ActivityTemplatesApiClient = {
       listTemplates: jest.fn(async () => []),
       createTemplate: jest.fn(),
+      updateTemplate: jest.fn(),
       assignTemplate: jest.fn(),
     };
 

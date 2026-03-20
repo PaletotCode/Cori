@@ -89,7 +89,6 @@ describe("patients api client", () => {
       email: "atualizada@cori.dev",
       phone: "+55 65 98888-7777",
       preferredContactChannel: "email",
-      preferredContactPeriod: "morning",
       overwriteInitialRegistration: true,
       overwriteReason: "Dados anteriores desatualizados.",
     });
@@ -103,7 +102,6 @@ describe("patients api client", () => {
           email: "atualizada@cori.dev",
           phone: "+55 65 98888-7777",
           preferred_contact_channel: "email",
-          preferred_contact_period: "morning",
           overwrite_initial_registration: true,
           overwrite_reason: "Dados anteriores desatualizados.",
         }),

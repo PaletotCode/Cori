@@ -1,0 +1,88 @@
+{
+  "probe": "redis_recovery",
+  "started_at_utc": "2026-03-19T00:09:49.631520+00:00",
+  "health_before": {
+    "http_status": 200,
+    "payload": {
+      "status": "ok",
+      "timestamp_utc": "2026-03-19T00:09:49.036971Z",
+      "dependencies": {
+        "database": "ok",
+        "redis": "ok"
+      }
+    }
+  },
+  "stop_redis": {
+    "cmd": "docker stop cori-redis",
+    "returncode": 0,
+    "stdout": "cori-redis",
+    "stderr": "",
+    "duration_ms": 333.49491699482314
+  },
+  "wait_degraded": {
+    "matched": true,
+    "attempts": [
+      {
+        "http_status": 503,
+        "payload": {
+          "status": "degraded",
+          "timestamp_utc": "2026-03-19T00:09:49.403661Z",
+          "dependencies": {
+            "database": "ok",
+            "redis": "down"
+          }
+        }
+      }
+    ],
+    "elapsed_seconds": 0.03298433300369652
+  },
+  "start_redis": {
+    "cmd": "docker start cori-redis",
+    "returncode": 0,
+    "stdout": "cori-redis",
+    "stderr": "",
+    "duration_ms": 92.6152500032913
+  },
+  "wait_recovered": {
+    "matched": true,
+    "attempts": [
+      {
+        "http_status": 200,
+        "payload": {
+          "status": "ok",
+          "timestamp_utc": "2026-03-19T00:09:49.514958Z",
+          "dependencies": {
+            "database": "ok",
+            "redis": "ok"
+          }
+        }
+      }
+    ],
+    "elapsed_seconds": 0.017877124999358784
+  },
+  "realtime_after_recovery": {
+    "success": true,
+    "receive_latency_ms": 13.627499996800907,
+    "message": {
+      "type": "notification",
+      "id": "0a4f8b30-628b-400a-a997-b6b0dbef417f",
+      "title": "Nova atividade atribuida",
+      "body": "Atividade 'Failure Probe Activity' atribuida para Paciente Failure Probe.",
+      "created_at": "2026-03-19T00:09:49.623049+00:00",
+      "tenant_id": "1c288a17-44ea-49d5-a601-4797999601c5",
+      "patient_id": "30c722d8-d872-4ab5-9087-86ddd5243a64",
+      "status": "sent",
+      "category": "activities",
+      "event_type": "activity_assigned",
+      "entity_type": "activity",
+      "entity_id": "9e7ab783-174e-42ce-82e5-f74a60f1679d",
+      "metadata": {
+        "activity_id": "9e7ab783-174e-42ce-82e5-f74a60f1679d",
+        "entity_type": "activity",
+        "entity_id": "9e7ab783-174e-42ce-82e5-f74a60f1679d"
+      }
+    },
+    "activity_id": "9e7ab783-174e-42ce-82e5-f74a60f1679d"
+  },
+  "success": true
+}

@@ -51,10 +51,14 @@ interface NotificationDeliveryResponseBody {
   patient_id: string;
   event_type: string;
   category: "sessions" | "activities" | "forms" | "documents" | "notifications" | "app_usage";
+  category_label?: string;
   title: string;
   body: string;
   status: "queued" | "sent" | "delivered" | "opened" | "action_taken" | "failed";
   status_reason: string | null;
+  natural_title?: string;
+  natural_event_label?: string;
+  natural_detail?: string;
   channel_inbox: boolean;
   channel_push: boolean;
   channel_realtime: boolean;
@@ -72,14 +76,19 @@ interface NotificationDeliveryResponseBody {
 interface UnifiedTimelineEventResponseBody {
   id: string;
   category: "sessions" | "activities" | "forms" | "documents" | "notifications" | "app_usage";
+  category_label?: string;
   event_type: string;
   actor_type: string;
+  actor_label?: string;
   actor_id: string | null;
   session_id: string | null;
   activity_id: string | null;
   form_id: string | null;
   notification_delivery_id: string | null;
   payload: Record<string, unknown>;
+  natural_title?: string;
+  natural_event_label?: string;
+  natural_detail?: string;
   created_at: string;
 }
 
@@ -180,10 +189,14 @@ function mapDelivery(payload: NotificationDeliveryResponseBody): NotificationDel
     patientId: payload.patient_id,
     eventType: payload.event_type,
     category: payload.category,
+    categoryLabel: payload.category_label,
     title: payload.title,
     body: payload.body,
     status: payload.status,
     statusReason: payload.status_reason,
+    naturalTitle: payload.natural_title,
+    naturalEventLabel: payload.natural_event_label,
+    naturalDetail: payload.natural_detail,
     channelInbox: payload.channel_inbox,
     channelPush: payload.channel_push,
     channelRealtime: payload.channel_realtime,
@@ -203,14 +216,19 @@ function mapTimelineEvent(payload: UnifiedTimelineEventResponseBody): UnifiedTim
   return {
     id: payload.id,
     category: payload.category,
+    categoryLabel: payload.category_label,
     eventType: payload.event_type,
     actorType: payload.actor_type,
+    actorLabel: payload.actor_label,
     actorId: payload.actor_id,
     sessionId: payload.session_id,
     activityId: payload.activity_id,
     formId: payload.form_id,
     notificationDeliveryId: payload.notification_delivery_id,
     payload: payload.payload,
+    naturalTitle: payload.natural_title,
+    naturalEventLabel: payload.natural_event_label,
+    naturalDetail: payload.natural_detail,
     createdAt: payload.created_at,
   };
 }
@@ -501,4 +519,3 @@ export function createNotificationsApiClient(
     },
   };
 }
-

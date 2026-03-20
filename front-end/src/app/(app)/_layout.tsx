@@ -1,114 +1,23 @@
-import { Ionicons } from "@expo/vector-icons";
 import { Redirect, Tabs } from "expo-router";
-import { useEffect, useRef } from "react";
-import { Animated, Easing, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuthStore } from "../../features/auth/hooks/useAuthStore";
 import { resolveProtectedRouteRedirect } from "../../features/navigation/guards";
 import { PsychologistHeaderProfileMenu } from "../../features/psychologist/components/PsychologistHeaderProfileMenu";
-import { appColors, navigationTheme } from "../../shared/ui/navigationTheme";
-import { screenMotionContract } from "../../shared/ui/screenMotionContract";
-
-function TabIcon({
-  focused,
-  name,
-  accentColor,
-}: {
-  focused: boolean;
-  name: keyof typeof Ionicons.glyphMap;
-  accentColor: string;
-}) {
-  const motionProgress = useRef(new Animated.Value(focused ? 1 : 0)).current;
-  const colorProgress = useRef(new Animated.Value(focused ? 1 : 0)).current;
-
-  useEffect(() => {
-    const motionAnimation = Animated.timing(motionProgress, {
-      toValue: focused ? 1 : 0,
-      duration: focused
-        ? screenMotionContract.tabIconFocusDurationMs
-        : screenMotionContract.tabIconBlurDurationMs,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    });
-    const colorAnimation = Animated.timing(colorProgress, {
-      toValue: focused ? 1 : 0,
-      duration: focused
-        ? screenMotionContract.tabIconFocusDurationMs
-        : screenMotionContract.tabIconBlurDurationMs,
-      easing: Easing.inOut(Easing.ease),
-      useNativeDriver: false,
-    });
-
-    motionAnimation.start();
-    colorAnimation.start();
-
-    return () => {
-      motionAnimation.stop();
-      colorAnimation.stop();
-    };
-  }, [focused, colorProgress, motionProgress]);
-
-  return (
-    <Animated.View
-      style={[
-        styles.iconWrap,
-        {
-          backgroundColor: colorProgress.interpolate({
-            inputRange: [0, 1],
-            outputRange: ["rgba(255,255,255,0)", `${accentColor}26`],
-          }),
-          shadowColor: accentColor,
-          shadowOpacity: colorProgress.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.08, 0.2],
-          }),
-          transform: [
-            {
-              translateY: motionProgress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0, -1.5],
-              }),
-            },
-            {
-              scale: motionProgress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 1.03],
-              }),
-            },
-          ],
-        },
-      ]}
-    >
-      <Animated.View
-        style={{
-          transform: [
-            {
-              translateY: motionProgress.interpolate({
-                inputRange: [0, 0.65, 1],
-                outputRange: [0, -2.5, -1.5],
-              }),
-            },
-            {
-              scale: motionProgress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 1.04],
-              }),
-            },
-          ],
-        }}
-      >
-        <Ionicons
-          name={name}
-          size={20}
-          color={focused ? accentColor : appColors.textMuted}
-          style={styles.iconGlyph}
-        />
-      </Animated.View>
-    </Animated.View>
-  );
-}
+import {
+  BottomTabButton,
+  BottomTabIcon,
+  BottomTabLabel,
+} from "../../shared/ui/BottomNavigation";
+import {
+  appColors,
+  createBottomTabBarStyle,
+  navigationTheme,
+} from "../../shared/ui/navigationTheme";
 
 export default function ProtectedLayout() {
+  const insets = useSafeAreaInsets();
   const hydrated = useAuthStore((state) => state.hydrated);
   const status = useAuthStore((state) => state.status);
   const onboardingCompleted = useAuthStore((state) => state.profile?.onboardingCompleted ?? null);
@@ -128,27 +37,36 @@ export default function ProtectedLayout() {
       screenOptions={{
         headerShown: true,
         headerTitleAlign: "left",
+        lazy: false,
         headerStyle: navigationTheme.header,
         headerTitleStyle: navigationTheme.headerTitle,
         headerRightContainerStyle: styles.headerRightContainer,
         headerShadowVisible: false,
-        tabBarStyle: navigationTheme.tabBar,
-        tabBarLabelStyle: navigationTheme.tabBarLabel,
+        tabBarStyle: createBottomTabBarStyle(insets.bottom),
         tabBarItemStyle: [navigationTheme.tabBarItem, styles.tabItem],
+        // Regra 5: paleta neutra + uma unica cor de destaque da marca (sem cor por aba).
         tabBarActiveTintColor: appColors.primary,
         tabBarInactiveTintColor: appColors.textMuted,
         tabBarHideOnKeyboard: true,
+        // Regra 9: feedback imediato de toque com ripple + scale sutil.
+        tabBarButton: (props) => <BottomTabButton {...props} />,
       }}
     >
+      {/* Regra 1: 5 abas principais (entre 3 e 5). Rotas auxiliares ficam fora da barra com href:null. */}
       <Tabs.Screen
         name="psicologo/sessao"
         options={{
           title: "Painel do Psicologo",
           headerRight: () => <PsychologistHeaderProfileMenu />,
-          tabBarLabel: "Painel",
-          tabBarActiveTintColor: "#0F766E",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Painel" />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} name="home-outline" accentColor="#0F766E" />
+            <BottomTabIcon
+              focused={focused}
+              icons={{
+                outline: "home-outline",
+                filled: "home",
+              }}
+            />
           ),
         }}
       />
@@ -156,10 +74,15 @@ export default function ProtectedLayout() {
         name="psicologo/agenda"
         options={{
           title: "Agenda Clinica",
-          tabBarLabel: "Agenda",
-          tabBarActiveTintColor: "#0369A1",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Agenda" />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} name="calendar-outline" accentColor="#0369A1" />
+            <BottomTabIcon
+              focused={focused}
+              icons={{
+                outline: "calendar-outline",
+                filled: "calendar",
+              }}
+            />
           ),
         }}
       />
@@ -167,21 +90,31 @@ export default function ProtectedLayout() {
         name="psicologo/pacientes"
         options={{
           title: "Gestao de Pacientes",
-          tabBarLabel: "Pacientes",
-          tabBarActiveTintColor: "#B54708",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Pacientes" />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} name="people-outline" accentColor="#B54708" />
+            <BottomTabIcon
+              focused={focused}
+              icons={{
+                outline: "people-outline",
+                filled: "people",
+              }}
+            />
           ),
         }}
       />
       <Tabs.Screen
         name="psicologo/atividades"
         options={{
-          title: "Atividades Terapeuticas",
-          tabBarLabel: "Ativ.",
-          tabBarActiveTintColor: "#4338CA",
+          title: "Atividades",
+          tabBarLabel: ({ focused }) => <BottomTabLabel focused={focused} label="Atividades" />,
           tabBarIcon: ({ focused }) => (
-            <TabIcon focused={focused} name="pulse-outline" accentColor="#4338CA" />
+            <BottomTabIcon
+              focused={focused}
+              icons={{
+                outline: "pulse-outline",
+                filled: "pulse",
+              }}
+            />
           ),
         }}
       />
@@ -189,15 +122,7 @@ export default function ProtectedLayout() {
         name="psicologo/formularios"
         options={{
           title: "Builder de Formularios",
-          tabBarLabel: "Forms",
-          tabBarActiveTintColor: "#7C3AED",
-          tabBarIcon: ({ focused }) => (
-            <TabIcon
-              focused={focused}
-              name="document-text-outline"
-              accentColor="#7C3AED"
-            />
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen
@@ -211,6 +136,13 @@ export default function ProtectedLayout() {
         name="psicologo/configuracoes"
         options={{
           title: "Configuracoes da Clinica",
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="psicologo/timeline"
+        options={{
+          title: "Timeline",
           href: null,
         }}
       />
@@ -230,22 +162,6 @@ const styles = StyleSheet.create({
   tabItem: {
     flex: 1,
     minWidth: 0,
-  },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowOpacity: 0.12,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  iconGlyph: {
-    textShadowColor: "rgba(15, 23, 42, 0.26)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
   hiddenTabBar: {
     display: "none",

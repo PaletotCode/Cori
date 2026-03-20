@@ -17,7 +17,6 @@ const modeOptions: Array<{
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
 }> = [
-  { mode: "compact", label: "Compacto", icon: "apps-outline" },
   { mode: "stack", label: "Empilhado", icon: "layers-outline" },
   { mode: "details", label: "Detalhes", icon: "albums-outline" },
   { mode: "list", label: "Lista", icon: "list-outline" },

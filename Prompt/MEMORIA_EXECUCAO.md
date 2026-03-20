@@ -4,8 +4,8 @@ Este arquivo e atualizado ao fim de cada prompt.
 
 ## Estado Atual
 
-- Ultimo prompt concluido: `Prompt 10 - Timeline Unificada, Notificacoes e Fechamento de 50%`
-- Percentual entregue do alvo (50%): `50%`
+- Ultimo prompt concluido: `Rodada Extra - Templates e Atribuicao Realtime (multi-tenant)`
+- Percentual entregue do alvo (50%): `50% + extensoes backend pos-fechamento`
 - Data da ultima atualizacao: `2026-03-18`
 
 ## Decisoes Tecnicas Consolidadas
@@ -74,6 +74,15 @@ Este arquivo e atualizado ao fim de cada prompt.
 - Inbox do paciente entregue com listagem de notificacoes, acao de abertura/acao tomada e registro de eventos de documento `shared/opened/acknowledged`.
 - Preferencias de notificacao no app do paciente entregues (canais, janela de silencio, frequencia maxima), incluindo endpoint publico por token.
 - Realtime de notificacoes expandido para propagar identificador/status/categoria/evento ao app em tempo real.
+- Novas entidades desacopladas de paciente entregues: `activity_templates` e `form_templates`, com CRUD completo, soft-delete e isolamento por tenant.
+- Fluxo de atribuicao por template entregue com `POST /activity-templates/{id}/assign` e `POST /form-templates/{id}/assign` (modos `immediate|scheduled`).
+- Idempotencia de atribuicao entregue com `Idempotency-Key` e persistencia transacional em `assignment_idempotency_keys`, evitando duplicidade em double-submit/retry.
+- Instancias reais de atividade/formulario agora persistem `source_template_id`, preservando snapshot e impedindo mutacao retroativa do template.
+- Atividades passaram a suportar estado `scheduled` e `scheduled_send_at`, com scheduler de dispatch dedicado (`/scheduler/activities-dispatch/run`).
+- Realtime `/ws` evoluido para entrega segura por canal (`tenant:<id>` e `patient:<id>`), com autenticacao por JWT (`token`) e token publico paciente (`patient_token`).
+- Payload realtime de notificacoes agora inclui contrato completo para app paciente: `event_type`, `entity_type`, `entity_id`, `patient_id`, `tenant_id`, `title`, `body`, `created_at`, `metadata`.
+- Contrato de evento realtime documentado em `docs/realtime_patient_event_contract.md`.
+- Evidencias operacionais registradas em artefatos: `backend/artifacts/prompt_templates_api_evidence.txt`, `backend/artifacts/realtime_two_clients_probe.json`, `backend/artifacts/persistence_evidence.json`.
 
 ## Comandos Validos Confirmados
 
@@ -119,6 +128,8 @@ Este arquivo e atualizado ao fim de cada prompt.
 - Planejar etapa 2 do MVP (alem dos 50%) com foco em financeiro avancado e equipe multiprofissional.
 - Definir integracao real de push provider (FCM/APNs) com retries e observabilidade.
 - Evoluir analytics e automacoes de notificacao por prioridade clinica.
+- Conectar scheduler recorrente para dispatch automatico de atividades agendadas em ambiente produtivo.
+- Avaliar indice complementar para busca textual de templates por titulo/instrucoes em tenants com alto volume.
 
 ## Log por Prompt
 
@@ -181,3 +192,9 @@ Este arquivo e atualizado ao fim de cada prompt.
 - resumo: timeline individual unificada entregue no psicologo com filtros por categoria e consolidacao de eventos de sessoes, atividades, formularios, documentos, notificacoes e uso do app; motor de notificacoes v1 entregue com regras por tenant/paciente, janela de silencio, frequencia maxima, tracking de estados de entrega e inbox/preferencias no app do paciente; modelo append-only preservado com correlacao por `notification_delivery_id`.
 - testes: integracao E2E de notificacoes e realtime + tracking (`backend/tests/integration/test_notifications_timeline_prompt10.py`), regressao backend completa (`backend/.venv/bin/pytest backend/tests -q`), testes frontend de API/UX para timeline/inbox/preferencias (`front-end/tests/notificationsApiClient.test.ts`, `front-end/tests/psychologistTimelineScreen.test.tsx`, `front-end/tests/patientNotificationsInboxScreen.test.tsx`, `front-end/tests/patientNotificationPreferencesScreen.test.tsx`), regressao frontend completa (`npm --prefix front-end run test -- --runInBand`) e validacao integrada de qualidade/build (`make pipeline`).
 - evidencias: `backend/app/services/notification_service.py`, `backend/app/api/routes_notifications.py`, `backend/app/models/notification_rule.py`, `backend/app/models/notification_delivery.py`, `backend/alembic/versions/20260318_0008_timeline_notifications_v1.py`, `front-end/src/features/notifications/screens/PsychologistTimelineScreen.tsx`, `front-end/src/features/notifications/screens/PatientNotificationsInboxScreen.tsx`, `front-end/src/features/notifications/screens/PatientNotificationPreferencesScreen.tsx`, `front-end/src/features/notifications/api/notificationsApiClient.ts`, `front-end/app/(app)/psicologo/timeline.tsx`, `front-end/app/(auth)/paciente/inbox.tsx`, `front-end/app/(auth)/paciente/preferencias-notificacao.tsx`.
+
+### Rodada Extra - Templates e Atribuicao Realtime
+- status: concluido
+- resumo: backend estendido para fluxo desacoplado de template (atividade/formulario) e atribuicao por agenda com idempotencia, trilha de timeline, notificacao persistida e entrega realtime segura por paciente sem quebra de contratos legados.
+- testes: unitarios de regras de assign/template (`backend/tests/unit/test_template_assignment_rules.py`), integracao CRUD+assign+idempotencia+scheduler+realtime+compatibilidade (`backend/tests/integration/test_templates_assignment_realtime_flow.py`), regressao completa backend (`backend/.venv/bin/pytest backend/tests -q`), lint (`backend/.venv/bin/ruff check backend/app backend/tests`) e typecheck (`backend/.venv/bin/mypy backend/app`).
+- evidencias: `backend/app/api/routes_activity_templates.py`, `backend/app/api/routes_form_templates.py`, `backend/app/services/template_assignment_service.py`, `backend/app/services/realtime_hub.py`, `backend/app/api/routes_realtime.py`, `backend/app/services/notification_service.py`, `backend/alembic/versions/20260318_0010_templates_assignment_realtime.py`, `docs/realtime_patient_event_contract.md`, `backend/artifacts/prompt_templates_api_evidence.txt`, `backend/artifacts/realtime_two_clients_probe.json`, `backend/artifacts/persistence_evidence.json`.

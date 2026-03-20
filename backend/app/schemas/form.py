@@ -104,6 +104,7 @@ class ClinicalFormListItemResponse(BaseModel):
     patient_id: str
     patient_name: str
     psychologist_id: str
+    source_template_id: str | None
     status: FormStatus
     title: str
     subtitle: str | None

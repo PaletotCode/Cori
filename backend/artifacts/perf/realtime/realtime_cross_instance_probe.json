@@ -1,0 +1,40 @@
+{
+  "probe": "realtime_cross_instance",
+  "started_at_utc": "2026-03-19T00:09:16.882257+00:00",
+  "api_a": "http://localhost:8000",
+  "api_b": "http://localhost:8001",
+  "tenant_id": "1c288a17-44ea-49d5-a601-4797999601c5",
+  "patient_id": "0e1a8ea4-d297-4f8b-8ae3-97ccfc287211",
+  "subscription_channel": "tenant:1c288a17-44ea-49d5-a601-4797999601c5",
+  "connected_payload": {
+    "type": "connected",
+    "at": "2026-03-19T00:09:16.822933+00:00",
+    "channels": [
+      "tenant:1c288a17-44ea-49d5-a601-4797999601c5"
+    ]
+  },
+  "trigger_response_status": 200,
+  "trigger_activity_id": "33661429-8e8f-4eb0-95ea-186a51876ab2",
+  "received_message": {
+    "type": "notification",
+    "id": "8544e0c1-cfc7-438a-be35-29da6a2cd585",
+    "title": "Nova atividade atribuida",
+    "body": "Atividade 'Probe cross-instance' atribuida para Paciente Cross Instance Realtime.",
+    "created_at": "2026-03-19T00:09:16.870528+00:00",
+    "tenant_id": "1c288a17-44ea-49d5-a601-4797999601c5",
+    "patient_id": "0e1a8ea4-d297-4f8b-8ae3-97ccfc287211",
+    "status": "sent",
+    "category": "activities",
+    "event_type": "activity_assigned",
+    "entity_type": "activity",
+    "entity_id": "33661429-8e8f-4eb0-95ea-186a51876ab2",
+    "metadata": {
+      "activity_id": "33661429-8e8f-4eb0-95ea-186a51876ab2",
+      "entity_id": "33661429-8e8f-4eb0-95ea-186a51876ab2",
+      "entity_type": "activity"
+    }
+  },
+  "receive_latency_ms": 57.58487500133924,
+  "event_clock_lag_ms": 11.724,
+  "success": true
+}

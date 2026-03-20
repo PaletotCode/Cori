@@ -1,0 +1,225 @@
+LOGIN_JSON
+{"access_token": "***MASKED***", "refresh_token": "***MASKED***", "token_type": "bearer", "access_expires_in": 1799, "refresh_expires_in": 1295999}
+
+ACT_TEMPLATE_CREATE
+{
+    "id": "a6c62f47-6a9b-40d5-a148-6b240429a03e",
+    "tenant_id": "f321f3c5-5ac3-4c2b-8f7a-51f76244d3e4",
+    "psychologist_id": "ac60f6a9-6584-4816-8630-ce209037dfdf",
+    "title": "Template API Evidencia",
+    "description": null,
+    "instructions": "Executar tarefa do dia.",
+    "document_url": null,
+    "configuration": {
+        "origin": "evidence"
+    },
+    "activity_type": "simple_task",
+    "created_at": "2026-03-18T21:28:31.767604Z",
+    "updated_at": "2026-03-18T21:28:31.767607Z",
+    "archived_at": null
+}
+
+ACT_ASSIGN_IMMEDIATE
+{
+    "idempotency_replayed": false,
+    "activity": {
+        "id": "e3b3e5a9-b5fa-4a8a-9843-802e96a79ecb",
+        "patient_id": "9520bfb3-234f-43a4-96fe-a48d9cce0da3",
+        "patient_name": "Paciente Aurora",
+        "psychologist_id": "ac60f6a9-6584-4816-8630-ce209037dfdf",
+        "source_template_id": "a6c62f47-6a9b-40d5-a148-6b240429a03e",
+        "activity_type": "simple_task",
+        "status": "assigned",
+        "title": "Atividade Immediate Evidencia",
+        "due_at": "2026-03-21T21:28:31.731313Z",
+        "scheduled_send_at": null,
+        "assigned_at": "2026-03-18T21:28:31.805273Z",
+        "overdue_at": null,
+        "recurrence_rule": "none",
+        "recurrence_interval": 1,
+        "recurrence_end_at": null,
+        "execution_elapsed_seconds": 0,
+        "tenant_id": "f321f3c5-5ac3-4c2b-8f7a-51f76244d3e4",
+        "description": null,
+        "instructions": "Executar tarefa do dia.",
+        "document_url": null,
+        "configuration": {
+            "origin": "evidence"
+        },
+        "opened_at": null,
+        "started_at": null,
+        "paused_at": null,
+        "completed_at": null,
+        "canceled_at": null,
+        "feedback_note": null,
+        "created_at": "2026-03-18T21:28:31.808974Z",
+        "updated_at": "2026-03-18T21:28:31.808977Z"
+    }
+}
+
+ACT_ASSIGN_SCHEDULED
+{
+    "idempotency_replayed": false,
+    "activity": {
+        "id": "52499b76-a6e8-4059-8a4d-5061444dbfd3",
+        "patient_id": "9520bfb3-234f-43a4-96fe-a48d9cce0da3",
+        "patient_name": "Paciente Aurora",
+        "psychologist_id": "ac60f6a9-6584-4816-8630-ce209037dfdf",
+        "source_template_id": "a6c62f47-6a9b-40d5-a148-6b240429a03e",
+        "activity_type": "simple_task",
+        "status": "scheduled",
+        "title": "Template API Evidencia",
+        "due_at": "2026-03-21T21:28:31.731313Z",
+        "scheduled_send_at": "2026-03-18T21:30:31.714074Z",
+        "assigned_at": "2026-03-18T21:28:31.840026Z",
+        "overdue_at": null,
+        "recurrence_rule": "none",
+        "recurrence_interval": 1,
+        "recurrence_end_at": null,
+        "execution_elapsed_seconds": 0,
+        "tenant_id": "f321f3c5-5ac3-4c2b-8f7a-51f76244d3e4",
+        "description": null,
+        "instructions": "Executar tarefa do dia.",
+        "document_url": null,
+        "configuration": {
+            "origin": "evidence"
+        },
+        "opened_at": null,
+        "started_at": null,
+        "paused_at": null,
+        "completed_at": null,
+        "canceled_at": null,
+        "feedback_note": null,
+        "created_at": "2026-03-18T21:28:31.843909Z",
+        "updated_at": "2026-03-18T21:28:31.843910Z"
+    }
+}
+
+FORM_TEMPLATE_CREATE
+{
+    "id": "865bb38e-15e3-4ecd-8b44-8d2c8b1c25db",
+    "tenant_id": "f321f3c5-5ac3-4c2b-8f7a-51f76244d3e4",
+    "psychologist_id": "ac60f6a9-6584-4816-8630-ce209037dfdf",
+    "title": "Template Form API Evidencia",
+    "subtitle": "Acompanhamento",
+    "header": "Responder com sinceridade",
+    "sections": [
+        {
+            "section_id": "s1",
+            "title": "Estado",
+            "description": null,
+            "questions": [
+                {
+                    "question_id": "q1",
+                    "label": "Como voce esta hoje?",
+                    "field_type": "short_text",
+                    "required": true,
+                    "help_text": null,
+                    "options": null,
+                    "scale_min": null,
+                    "scale_max": null
+                }
+            ]
+        }
+    ],
+    "created_at": "2026-03-18T21:28:31.859286Z",
+    "updated_at": "2026-03-18T21:28:31.859288Z",
+    "archived_at": null
+}
+
+FORM_ASSIGN_IMMEDIATE
+{
+    "idempotency_replayed": false,
+    "form": {
+        "id": "71848afb-011d-4442-9339-0b69ec3d1f03",
+        "patient_id": "9520bfb3-234f-43a4-96fe-a48d9cce0da3",
+        "patient_name": "Paciente Aurora",
+        "psychologist_id": "ac60f6a9-6584-4816-8630-ce209037dfdf",
+        "source_template_id": "865bb38e-15e3-4ecd-8b44-8d2c8b1c25db",
+        "status": "assigned",
+        "title": "Formulario Immediate Evidencia",
+        "subtitle": "Acompanhamento",
+        "published_at": "2026-03-18T21:28:31.891799Z",
+        "scheduled_send_at": null,
+        "assigned_at": "2026-03-18T21:28:31.891799Z",
+        "submitted_at": null,
+        "reviewed_at": null,
+        "tenant_id": "f321f3c5-5ac3-4c2b-8f7a-51f76244d3e4",
+        "header": "Responder com sinceridade",
+        "sections": [
+            {
+                "section_id": "s1",
+                "title": "Estado",
+                "description": null,
+                "questions": [
+                    {
+                        "question_id": "q1",
+                        "label": "Como voce esta hoje?",
+                        "field_type": "short_text",
+                        "required": true,
+                        "help_text": null,
+                        "options": null,
+                        "scale_min": null,
+                        "scale_max": null
+                    }
+                ]
+            }
+        ],
+        "response_data": null,
+        "opened_at": null,
+        "partial_saved_at": null,
+        "reviewed_by_user_id": null,
+        "review_note": null,
+        "created_at": "2026-03-18T21:28:31.893945Z",
+        "updated_at": "2026-03-18T21:28:31.893947Z"
+    }
+}
+
+FORM_ASSIGN_SCHEDULED
+{
+    "idempotency_replayed": false,
+    "form": {
+        "id": "36dd529a-b8d5-4e64-91c7-af0b8605093c",
+        "patient_id": "9520bfb3-234f-43a4-96fe-a48d9cce0da3",
+        "patient_name": "Paciente Aurora",
+        "psychologist_id": "ac60f6a9-6584-4816-8630-ce209037dfdf",
+        "source_template_id": "865bb38e-15e3-4ecd-8b44-8d2c8b1c25db",
+        "status": "scheduled",
+        "title": "Template Form API Evidencia",
+        "subtitle": "Acompanhamento",
+        "published_at": "2026-03-18T21:28:31.921277Z",
+        "scheduled_send_at": "2026-03-18T21:30:31.714074Z",
+        "assigned_at": null,
+        "submitted_at": null,
+        "reviewed_at": null,
+        "tenant_id": "f321f3c5-5ac3-4c2b-8f7a-51f76244d3e4",
+        "header": "Responder com sinceridade",
+        "sections": [
+            {
+                "section_id": "s1",
+                "title": "Estado",
+                "description": null,
+                "questions": [
+                    {
+                        "question_id": "q1",
+                        "label": "Como voce esta hoje?",
+                        "field_type": "short_text",
+                        "required": true,
+                        "help_text": null,
+                        "options": null,
+                        "scale_min": null,
+                        "scale_max": null
+                    }
+                ]
+            }
+        ],
+        "response_data": null,
+        "opened_at": null,
+        "partial_saved_at": null,
+        "reviewed_by_user_id": null,
+        "review_note": null,
+        "created_at": "2026-03-18T21:28:31.923316Z",
+        "updated_at": "2026-03-18T21:28:31.923316Z"
+    }
+}
+

@@ -1,6 +1,6 @@
-export type AppleCalendarScope = "year" | "month";
+export type AppleCalendarScope = "year" | "month" | "day";
 
-export type AppleCalendarMode = "compact" | "stack" | "details" | "list";
+export type AppleCalendarMode = "stack" | "details" | "list";
 
 export type AgendaEventType = "session" | "activity" | "form";
 

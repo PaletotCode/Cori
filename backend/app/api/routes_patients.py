@@ -10,21 +10,26 @@ from app.schemas.patient import (
     PatientChangeResponse,
     PatientChangeType,
     PatientContactChannel,
-    PatientContactPeriod,
     PatientCreateRequest,
     PatientDeleteResponse,
     PatientDetailResponse,
     PatientListItemResponse,
+    PatientOverviewKpisResponse,
     PatientProfileSource,
     PatientSortBy,
     PatientTimelineEventResponse,
     PatientUpdateRequest,
     SortOrder,
 )
+from app.services.notification_service import categorize_timeline_event
 from app.services.patient_service import (
     PatientServiceError,
     is_valid_whatsapp_number,
     patient_service,
+)
+from app.services.timeline_natural_language import (
+    build_patient_change_natural_summary,
+    build_timeline_natural_content,
 )
 
 router = APIRouter(prefix="/patients", tags=["patients"])
@@ -57,10 +62,6 @@ def _to_detail(patient: Patient) -> PatientDetailResponse:
         emergency_contact_name=patient.emergency_contact_name,
         emergency_contact_phone=patient.emergency_contact_phone,
         preferred_contact_channel=cast(PatientContactChannel, patient.preferred_contact_channel),
-        preferred_contact_period=cast(
-            PatientContactPeriod | None,
-            patient.preferred_contact_period,
-        ),
         communication_notes=patient.communication_notes,
         profile_source=cast(PatientProfileSource, patient.profile_source),
         whatsapp_number_valid=is_valid_whatsapp_number(patient.phone),
@@ -70,6 +71,11 @@ def _to_detail(patient: Patient) -> PatientDetailResponse:
 
 
 def _to_change(change: PatientProfileChange) -> PatientChangeResponse:
+    natural_summary = build_patient_change_natural_summary(
+        change_type=change.change_type,
+        changed_fields=change.changed_fields,
+        reason=change.reason,
+    )
     return PatientChangeResponse(
         id=str(change.id),
         change_type=cast(PatientChangeType, change.change_type),
@@ -80,19 +86,41 @@ def _to_change(change: PatientProfileChange) -> PatientChangeResponse:
         if change.changed_by_user_id is not None
         else None,
         reason=change.reason,
+        natural_summary=natural_summary,
         created_at=change.created_at,
     )
 
 
 def _to_timeline_event(event: TimelineEvent) -> PatientTimelineEventResponse:
+    resolved_category = _resolve_patient_timeline_category(event)
+    natural = build_timeline_natural_content(
+        category=resolved_category,
+        event_type=event.event_type,
+        actor_type=event.actor_type,
+        payload=event.payload,
+    )
     return PatientTimelineEventResponse(
         id=str(event.id),
         event_type=event.event_type,
+        category_label=natural.category_label,
         actor_type=event.actor_type,
+        actor_label=natural.actor_label,
         actor_id=str(event.actor_id) if event.actor_id is not None else None,
         payload=event.payload,
+        natural_title=natural.title,
+        natural_event_label=natural.event_label,
+        natural_detail=natural.detail,
         created_at=event.created_at,
     )
+
+
+def _resolve_patient_timeline_category(event: TimelineEvent) -> str:
+    event_type = event.event_type.lower()
+    if event_type.startswith("patient_") or event_type.startswith("intake_"):
+        return "profile"
+    if event_type.startswith("payment_"):
+        return "payments"
+    return categorize_timeline_event(event)
 
 
 @router.post("", response_model=PatientDetailResponse)
@@ -121,6 +149,8 @@ def list_patients(
     has_whatsapp: bool | None = Query(default=None),
     sort_by: PatientSortBy = Query(default="updated_at"),
     sort_order: SortOrder = Query(default="desc"),
+    limit: int | None = Query(default=None, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
     context: AuthContext = Depends(get_auth_context),
     db: Session = Depends(get_tenant_db),
 ) -> list[PatientListItemResponse]:
@@ -132,6 +162,8 @@ def list_patients(
         has_whatsapp=has_whatsapp,
         sort_by=sort_by,
         sort_order=sort_order,
+        limit=limit,
+        offset=offset,
     )
     return [_to_list_item(patient) for patient in patients]
 
@@ -243,3 +275,21 @@ def list_patient_timeline_events(
         limit=limit,
     )
     return [_to_timeline_event(event) for event in events]
+
+
+@router.get("/{patient_id}/overview-kpis", response_model=PatientOverviewKpisResponse)
+def get_patient_overview_kpis(
+    patient_id: UUID,
+    timezone: str | None = Query(default=None),
+    context: AuthContext = Depends(get_auth_context),
+    db: Session = Depends(get_tenant_db),
+) -> PatientOverviewKpisResponse:
+    try:
+        return patient_service.get_patient_overview_kpis(
+            db,
+            tenant_id=context.tenant_id,
+            patient_id=patient_id,
+            timezone_name=timezone,
+        )
+    except PatientServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

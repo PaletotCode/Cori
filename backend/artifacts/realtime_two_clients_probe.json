@@ -1,0 +1,25 @@
+{
+  "tenant_id": "dffc7ce3-0e07-4fa3-aee0-944f295391ac",
+  "patient_id": "fed53b81-df7e-4a56-969c-773043b7b153",
+  "activity_id": "4eeea250-3a5a-4ac7-b49b-21676065364f",
+  "request_sent_at": "2026-03-18T21:39:53.391187+00:00",
+  "event_emitted_at": "2026-03-18T21:39:53.406416+00:00",
+  "psychologist_received_at": "2026-03-18T21:39:53.412680+00:00",
+  "patient_received_at": "2026-03-18T21:39:53.412760+00:00",
+  "psychologist_latency_ms": 6.26,
+  "patient_latency_ms": 6.34,
+  "psychologist_event": {
+    "event_type": "activity_assigned",
+    "entity_type": "activity",
+    "entity_id": "4eeea250-3a5a-4ac7-b49b-21676065364f",
+    "patient_id": "fed53b81-df7e-4a56-969c-773043b7b153",
+    "tenant_id": "dffc7ce3-0e07-4fa3-aee0-944f295391ac"
+  },
+  "patient_event": {
+    "event_type": "activity_assigned",
+    "entity_type": "activity",
+    "entity_id": "4eeea250-3a5a-4ac7-b49b-21676065364f",
+    "patient_id": "fed53b81-df7e-4a56-969c-773043b7b153",
+    "tenant_id": "dffc7ce3-0e07-4fa3-aee0-944f295391ac"
+  }
+}

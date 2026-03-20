@@ -68,6 +68,9 @@ def _to_list_item(form: ClinicalForm) -> ClinicalFormListItemResponse:
         patient_id=str(form.patient_id),
         patient_name=patient_name,
         psychologist_id=str(form.psychologist_id),
+        source_template_id=str(form.source_template_id)
+        if form.source_template_id is not None
+        else None,
         status=cast(FormStatus, form.status),
         title=form.title,
         subtitle=form.subtitle,

@@ -23,4 +23,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     tenant = relationship("Tenant", back_populates="users")
     psychologist = relationship("Psychologist", back_populates="user", uselist=False)
+    dashboard_card_preferences = relationship(
+        "DashboardCardPreference", back_populates="user"
+    )
     refresh_tokens = relationship("AuthRefreshToken", back_populates="user")

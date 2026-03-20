@@ -1,5 +1,5 @@
 import { Link, useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { shellStyles } from "../../../shared/ui/shellStyles";
@@ -19,15 +19,16 @@ export function PsychologistLoginScreen() {
   const [email, setEmail] = useState("dr.aurora@cori.dev");
   const [password, setPassword] = useState("dev123456");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [autoLoginAttempted, setAutoLoginAttempted] = useState(false);
 
   const hasValidInput = useMemo(
-    () => email.trim().length >= 5 && password.trim().length >= 8,
+    () => email.trim().length >= 5 && password.trim().length >= 3,
     [email, password],
   );
 
   const displayError = localError ?? error;
 
-  const handleLogin = async () => {
+  const handleLogin = useCallback(async () => {
     if (!hasValidInput) {
       setLocalError("Informe email e senha validos.");
       return;
@@ -50,7 +51,7 @@ export function PsychologistLoginScreen() {
     } catch {
       // erro tratado no estado global da auth
     }
-  };
+  }, [email, hasValidInput, password, router]);
 
   useEffect(() => {
     if (status === "authenticated") {
@@ -59,6 +60,14 @@ export function PsychologistLoginScreen() {
       );
     }
   }, [status, onboardingCompleted, router]);
+
+  useEffect(() => {
+    if (autoLoginAttempted || status !== "anonymous" || loading || !hasValidInput) {
+      return;
+    }
+    setAutoLoginAttempted(true);
+    void handleLogin();
+  }, [autoLoginAttempted, handleLogin, hasValidInput, loading, status]);
 
   return (
     <View style={[styles.container, shellStyles.viewContainer]}>

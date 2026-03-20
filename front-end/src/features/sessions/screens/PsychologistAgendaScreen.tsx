@@ -1,5 +1,13 @@
 import { useNavigation, useRouter } from "expo-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { StyleSheet, View } from "react-native";
 
 import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
@@ -91,6 +99,38 @@ const REALTIME_REFRESH_EVENTS = new Set<string>([
   "session_confirmed_by_patient",
 ]);
 
+interface AgendaScreenCache {
+  patients: PatientListItem[];
+  activities: ActivityItem[];
+  forms: ClinicalFormListItem[];
+  activityTemplates: ActivityTemplateListItem[];
+  formTemplates: FormTemplateListItem[];
+  sessionsByMonth: Record<string, SessionAgendaItem[]>;
+  scope: AppleCalendarScope;
+  mode: AppleCalendarMode;
+  focusedMonthDateKey: string;
+  selectedDateKey: string;
+  contextLoaded: boolean;
+  calendarLoaded: boolean;
+}
+
+let agendaScreenCache: AgendaScreenCache | null = null;
+const AGENDA_REQUEST_ABORTED_ERROR_NAME = "PsychologistAgendaRequestAborted";
+
+interface EventsByDateBuckets {
+  [dateKey: string]: AgendaCalendarEvent[];
+}
+
+function createAgendaRequestAbortedError(): Error {
+  const error = new Error("Solicitacao interrompida.");
+  error.name = AGENDA_REQUEST_ABORTED_ERROR_NAME;
+  return error;
+}
+
+function isAgendaRequestAbortedError(error: unknown): boolean {
+  return error instanceof Error && error.name === AGENDA_REQUEST_ABORTED_ERROR_NAME;
+}
+
 interface PsychologistAgendaScreenProps {
   apiClient?: SessionsApiClient;
   activitiesClient?: ActivitiesApiClient;
@@ -130,6 +170,13 @@ function normalizeSelectedDateForMonth(selectedDateKey: string, monthDate: Date)
   const maxDay = new Date(year, month + 1, 0).getDate();
   const day = Math.min(selected.getDate(), maxDay);
   return toDateKeyFromDate(new Date(year, month, day));
+}
+
+function normalizeCalendarMode(mode: string | null | undefined): AppleCalendarMode {
+  if (mode === "stack" || mode === "details" || mode === "list") {
+    return mode;
+  }
+  return "list";
 }
 
 function createIdempotencyKey(prefix: string): string {
@@ -206,6 +253,92 @@ function upsertSessionIntoMonth(
   };
 }
 
+function toDateKeySafe(isoDate: string): string {
+  return toDateKeyFromIso(isoDate);
+}
+
+function mapBucketsToMap(buckets: EventsByDateBuckets): ReadonlyMap<string, AgendaCalendarEvent[]> {
+  return new Map(Object.entries(buckets));
+}
+
+function buildEventsByDateBuckets(params: {
+  sessionsByMonth: Record<string, SessionAgendaItem[]>;
+  activities: ActivityItem[];
+  forms: ClinicalFormListItem[];
+}): EventsByDateBuckets {
+  const { sessionsByMonth, activities, forms } = params;
+  const buckets: EventsByDateBuckets = {};
+
+  for (const monthSessions of Object.values(sessionsByMonth)) {
+    for (const session of monthSessions) {
+      const event: AgendaCalendarEvent = {
+        id: session.id,
+        title: session.patientName,
+        startsAt: session.scheduledStartAt,
+        endsAt: session.scheduledEndAt,
+        type: "session",
+        color: sessionColor(session.status),
+        patientName: session.patientName,
+      };
+      const dateKey = toDateKeySafe(event.startsAt);
+      if (buckets[dateKey] === undefined) {
+        buckets[dateKey] = [event];
+      } else {
+        buckets[dateKey].push(event);
+      }
+    }
+  }
+
+  for (const activity of activities) {
+    const eventDate = resolveActivityDate(activity);
+    const event: AgendaCalendarEvent = {
+      id: activity.id,
+      title: activity.title,
+      startsAt: eventDate,
+      endsAt: eventDate,
+      type: "activity",
+      color: activity.status === "scheduled" ? "#C688DD" : "#D89AE8",
+      patientName: activity.patientName,
+    };
+    const dateKey = toDateKeySafe(event.startsAt);
+    if (buckets[dateKey] === undefined) {
+      buckets[dateKey] = [event];
+    } else {
+      buckets[dateKey].push(event);
+    }
+  }
+
+  for (const form of forms) {
+    const formDate = resolveFormDate(form);
+    if (formDate === null) {
+      continue;
+    }
+    const event: AgendaCalendarEvent = {
+      id: form.id,
+      title: form.title,
+      startsAt: formDate,
+      endsAt: formDate,
+      type: "form",
+      color: "#9D7FEA",
+      patientName: form.patientName,
+    };
+    const dateKey = toDateKeySafe(event.startsAt);
+    if (buckets[dateKey] === undefined) {
+      buckets[dateKey] = [event];
+    } else {
+      buckets[dateKey].push(event);
+    }
+  }
+
+  for (const dateKey of Object.keys(buckets)) {
+    buckets[dateKey].sort(
+      (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
+    );
+  }
+
+  return buckets;
+}
+
 export function PsychologistAgendaScreen({
   apiClient = sessionsApiClient,
   activitiesClient = activitiesApiClient,
@@ -220,23 +353,43 @@ export function PsychologistAgendaScreen({
   const latestNotification = useNotificationsStore((state) => state.items[0] ?? null);
   const lastHandledRealtimeNotificationIdRef = useRef<string | null>(null);
 
-  const [patients, setPatients] = useState<PatientListItem[]>([]);
-  const [activities, setActivities] = useState<ActivityItem[]>([]);
-  const [forms, setForms] = useState<ClinicalFormListItem[]>([]);
-  const [activityTemplates, setActivityTemplates] = useState<ActivityTemplateListItem[]>([]);
-  const [formTemplates, setFormTemplates] = useState<FormTemplateListItem[]>([]);
-  const [sessionsByMonth, setSessionsByMonth] = useState<Record<string, SessionAgendaItem[]>>({});
+  const [patients, setPatients] = useState<PatientListItem[]>(() => agendaScreenCache?.patients ?? []);
+  const [activities, setActivities] = useState<ActivityItem[]>(() => agendaScreenCache?.activities ?? []);
+  const [forms, setForms] = useState<ClinicalFormListItem[]>(() => agendaScreenCache?.forms ?? []);
+  const [activityTemplates, setActivityTemplates] = useState<ActivityTemplateListItem[]>(
+    () => agendaScreenCache?.activityTemplates ?? [],
+  );
+  const [formTemplates, setFormTemplates] = useState<FormTemplateListItem[]>(
+    () => agendaScreenCache?.formTemplates ?? [],
+  );
+  const [sessionsByMonth, setSessionsByMonth] = useState<Record<string, SessionAgendaItem[]>>(
+    () => agendaScreenCache?.sessionsByMonth ?? {},
+  );
 
-  const [scope, setScope] = useState<AppleCalendarScope>("year");
-  const [mode, setMode] = useState<AppleCalendarMode>("compact");
+  const [scope, setScope] = useState<AppleCalendarScope>(() => agendaScreenCache?.scope ?? "year");
+  const [mode, setMode] = useState<AppleCalendarMode>(() =>
+    normalizeCalendarMode(agendaScreenCache?.mode),
+  );
 
-  const [focusedMonth, setFocusedMonth] = useState(startOfMonth(new Date()));
-  const [selectedDateKey, setSelectedDateKey] = useState(toDateKeyFromDate(new Date()));
+  const [focusedMonth, setFocusedMonth] = useState(() =>
+    agendaScreenCache?.focusedMonthDateKey
+      ? monthScopeFromDateKey(agendaScreenCache.focusedMonthDateKey)
+      : startOfMonth(new Date()),
+  );
+  const [selectedDateKey, setSelectedDateKey] = useState(
+    () => agendaScreenCache?.selectedDateKey ?? toDateKeyFromDate(new Date()),
+  );
 
   const [loadingContext, setLoadingContext] = useState(false);
   const [loadingCalendar, setLoadingCalendar] = useState(false);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [createSheetVisible, setCreateSheetVisible] = useState(false);
+  const [contextLoaded, setContextLoaded] = useState(
+    () => agendaScreenCache?.contextLoaded ?? false,
+  );
+  const [calendarLoaded, setCalendarLoaded] = useState(
+    () => agendaScreenCache?.calendarLoaded ?? false,
+  );
 
   const [flowStatusByMode, setFlowStatusByMode] =
     useState<Record<AgendaAssignMode, AgendaAssignFlowStatus>>(INITIAL_FLOW_STATUS);
@@ -245,16 +398,56 @@ export function PsychologistAgendaScreen({
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [eventsByDate, setEventsByDate] = useState<ReadonlyMap<string, AgendaCalendarEvent[]>>(() =>
+    mapBucketsToMap(
+      buildEventsByDateBuckets({
+        sessionsByMonth: agendaScreenCache?.sessionsByMonth ?? {},
+        activities: agendaScreenCache?.activities ?? [],
+        forms: agendaScreenCache?.forms ?? [],
+      }),
+    ),
+  );
+
+  const isMountedRef = useRef(true);
+  const contextLoadedRef = useRef(contextLoaded);
+  const calendarLoadedRef = useRef(calendarLoaded);
+  const contextLoadRequestIdRef = useRef(0);
+  const calendarLoadRequestIdRef = useRef(0);
+  const templatesLoadRequestIdRef = useRef(0);
+  const eventsComputationRequestIdRef = useRef(0);
+  const previousScopeBeforeDayRef = useRef<AppleCalendarScope>("month");
+  const previousModeBeforeDayRef = useRef<AppleCalendarMode>("list");
+
+  useEffect(() => {
+    contextLoadedRef.current = contextLoaded;
+  }, [contextLoaded]);
+
+  useEffect(() => {
+    calendarLoadedRef.current = calendarLoaded;
+  }, [calendarLoaded]);
+
+  useEffect(() => {
+    // 🚀 PERFORMANCE: cleanup centralizado evita listeners/requisicoes ativas apos unmount.
+    return () => {
+      isMountedRef.current = false;
+      contextLoadRequestIdRef.current += 1;
+      calendarLoadRequestIdRef.current += 1;
+      templatesLoadRequestIdRef.current += 1;
+      eventsComputationRequestIdRef.current += 1;
+    };
+  }, []);
 
   const todayDateKey = useMemo(() => toDateKeyFromDate(new Date()), []);
 
-  const loading = loadingContext || loadingCalendar;
+  const loading = (loadingContext && !contextLoaded) || (loadingCalendar && !calendarLoaded);
 
   const statusLabel = useMemo(
     () =>
       scope === "year"
         ? `Ano ${focusedMonth.getFullYear()}`
-        : `${monthLabel(focusedMonth)} ${focusedMonth.getFullYear()}`,
+        : scope === "month"
+          ? `${monthLabel(focusedMonth)} ${focusedMonth.getFullYear()}`
+          : undefined,
     [focusedMonth, scope],
   );
 
@@ -283,6 +476,25 @@ export function PsychologistAgendaScreen({
     [],
   );
 
+  const computeEventsByDateOnRuntime = useCallback(
+    async (
+      nextSessionsByMonth: Record<string, SessionAgendaItem[]>,
+      nextActivities: ActivityItem[],
+      nextForms: ClinicalFormListItem[],
+    ) => {
+      // 🚀 PERFORMANCE: agregacao pesada sai do frame atual com defer assíncrono para manter interacao fluida no Expo Go.
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+      return buildEventsByDateBuckets({
+        sessionsByMonth: nextSessionsByMonth,
+        activities: nextActivities,
+        forms: nextForms,
+      });
+    },
+    [],
+  );
+
   const refreshMonthSessions = useCallback(
     async (monthDate: Date) => {
       if (accessToken === null) {
@@ -293,10 +505,13 @@ export function PsychologistAgendaScreen({
         view: "month",
         referenceDate: toDateKeyFromDate(monthDate),
       });
-      setSessionsByMonth((current) => ({
-        ...current,
-        [monthKey]: response,
-      }));
+      // 🚀 PERFORMANCE: atualização de calendário em transição evita bloqueio visual durante fetch incremental.
+      startTransition(() => {
+        setSessionsByMonth((current) => ({
+          ...current,
+          [monthKey]: response,
+        }));
+      });
     },
     [accessToken, apiClient],
   );
@@ -323,7 +538,9 @@ export function PsychologistAgendaScreen({
     if (accessToken === null) {
       return;
     }
-    setLoadingContext(true);
+
+    const requestId = ++contextLoadRequestIdRef.current;
+    setLoadingContext(!contextLoadedRef.current);
     try {
       const [patientResult, activityResult, formResult] = await Promise.allSettled([
         patientsClient.list(accessToken, {
@@ -334,20 +551,32 @@ export function PsychologistAgendaScreen({
         formsClient.listForms(accessToken, { limit: 260 }),
       ]);
 
+      if (requestId !== contextLoadRequestIdRef.current || !isMountedRef.current) {
+        throw createAgendaRequestAbortedError();
+      }
+
       if (patientResult.status === "fulfilled") {
-        setPatients(patientResult.value);
+        // 🚀 PERFORMANCE: atualização de contexto em transição reduz re-render em cascata.
+        startTransition(() => {
+          setPatients(patientResult.value);
+          setActivities(activityResult.status === "fulfilled" ? activityResult.value : []);
+          setForms(formResult.status === "fulfilled" ? formResult.value : []);
+          setContextLoaded(true);
+        });
       } else {
         throw patientResult.reason;
       }
-
-      setActivities(activityResult.status === "fulfilled" ? activityResult.value : []);
-      setForms(formResult.status === "fulfilled" ? formResult.value : []);
     } catch (requestError) {
+      if (isAgendaRequestAbortedError(requestError)) {
+        return;
+      }
       setErrorMessage(
         requestError instanceof Error ? requestError.message : "Falha ao carregar dados da agenda.",
       );
     } finally {
-      setLoadingContext(false);
+      if (requestId === contextLoadRequestIdRef.current && isMountedRef.current) {
+        setLoadingContext(false);
+      }
     }
   }, [accessToken, activitiesClient, formsClient, patientsClient]);
 
@@ -355,6 +584,8 @@ export function PsychologistAgendaScreen({
     if (accessToken === null) {
       return;
     }
+
+    const requestId = ++templatesLoadRequestIdRef.current;
     setLoadingTemplates(true);
     try {
       const [activityTemplateResult, formTemplateResult] = await Promise.allSettled([
@@ -362,10 +593,17 @@ export function PsychologistAgendaScreen({
         formTemplatesClient.listTemplates(accessToken, { limit: 200 }),
       ]);
 
-      setActivityTemplates(
-        activityTemplateResult.status === "fulfilled" ? activityTemplateResult.value : [],
-      );
-      setFormTemplates(formTemplateResult.status === "fulfilled" ? formTemplateResult.value : []);
+      if (requestId !== templatesLoadRequestIdRef.current || !isMountedRef.current) {
+        throw createAgendaRequestAbortedError();
+      }
+
+      // 🚀 PERFORMANCE: templates aplicados em transição para não competir com frame de interação.
+      startTransition(() => {
+        setActivityTemplates(
+          activityTemplateResult.status === "fulfilled" ? activityTemplateResult.value : [],
+        );
+        setFormTemplates(formTemplateResult.status === "fulfilled" ? formTemplateResult.value : []);
+      });
 
       if (
         activityTemplateResult.status === "rejected" &&
@@ -374,13 +612,18 @@ export function PsychologistAgendaScreen({
         throw activityTemplateResult.reason;
       }
     } catch (requestError) {
+      if (isAgendaRequestAbortedError(requestError)) {
+        return;
+      }
       setErrorMessage(
         requestError instanceof Error
           ? requestError.message
           : "Falha ao carregar templates para atribuicao.",
       );
     } finally {
-      setLoadingTemplates(false);
+      if (requestId === templatesLoadRequestIdRef.current && isMountedRef.current) {
+        setLoadingTemplates(false);
+      }
     }
   }, [accessToken, activityTemplatesClient, formTemplatesClient]);
 
@@ -389,9 +632,10 @@ export function PsychologistAgendaScreen({
       return;
     }
 
-    setLoadingCalendar(true);
+    const requestId = ++calendarLoadRequestIdRef.current;
+    setLoadingCalendar(!calendarLoadedRef.current);
     try {
-      if (scope === "month") {
+      if (scope !== "year") {
         await refreshMonthSessions(focusedMonth);
       } else {
         const year = focusedMonth.getFullYear();
@@ -403,23 +647,38 @@ export function PsychologistAgendaScreen({
               view: "month",
               referenceDate: toDateKeyFromDate(monthDate),
             }),
-          })),
+              })),
         );
 
-        setSessionsByMonth((current) => {
-          const next = { ...current };
-          for (const response of responses) {
-            next[response.monthKey] = response.sessions;
-          }
-          return next;
+        if (requestId !== calendarLoadRequestIdRef.current || !isMountedRef.current) {
+          throw createAgendaRequestAbortedError();
+        }
+
+        // 🚀 PERFORMANCE: merge anual de meses aplicado em transição para preservar responsividade da UI.
+        startTransition(() => {
+          setSessionsByMonth((current) => {
+            const next = { ...current };
+            for (const response of responses) {
+              next[response.monthKey] = response.sessions;
+            }
+            return next;
+          });
         });
       }
+      startTransition(() => {
+        setCalendarLoaded(true);
+      });
     } catch (requestError) {
+      if (isAgendaRequestAbortedError(requestError)) {
+        return;
+      }
       setErrorMessage(
         requestError instanceof Error ? requestError.message : "Falha ao sincronizar visualizacao da agenda.",
       );
     } finally {
-      setLoadingCalendar(false);
+      if (requestId === calendarLoadRequestIdRef.current && isMountedRef.current) {
+        setLoadingCalendar(false);
+      }
     }
   }, [accessToken, apiClient, focusedMonth, refreshMonthSessions, scope]);
 
@@ -454,80 +713,53 @@ export function PsychologistAgendaScreen({
     });
   }, [latestNotification, loadContextData, refreshMonthSessions, selectedDateKey]);
 
-  const sessionEvents = useMemo<AgendaCalendarEvent[]>(() => {
-    return Object.values(sessionsByMonth)
-      .flat()
-      .map((session) => ({
-        id: session.id,
-        title: session.patientName,
-        startsAt: session.scheduledStartAt,
-        endsAt: session.scheduledEndAt,
-        type: "session",
-        color: sessionColor(session.status),
-        patientName: session.patientName,
-      }));
-  }, [sessionsByMonth]);
+  useEffect(() => {
+    agendaScreenCache = {
+      patients,
+      activities,
+      forms,
+      activityTemplates,
+      formTemplates,
+      sessionsByMonth,
+      scope,
+      mode,
+      focusedMonthDateKey: toDateKeyFromDate(startOfMonth(focusedMonth)),
+      selectedDateKey,
+      contextLoaded,
+      calendarLoaded,
+    };
+  }, [
+    activities,
+    activityTemplates,
+    calendarLoaded,
+    contextLoaded,
+    focusedMonth,
+    forms,
+    formTemplates,
+    mode,
+    patients,
+    scope,
+    selectedDateKey,
+    sessionsByMonth,
+  ]);
 
-  const activityEvents = useMemo<AgendaCalendarEvent[]>(
-    () =>
-      activities.map((activity) => {
-        const eventDate = resolveActivityDate(activity);
-        return {
-          id: activity.id,
-          title: activity.title,
-          startsAt: eventDate,
-          endsAt: eventDate,
-          type: "activity",
-          color: activity.status === "scheduled" ? "#C688DD" : "#D89AE8",
-          patientName: activity.patientName,
-        };
-      }),
-    [activities],
-  );
+  useEffect(() => {
+    const requestId = ++eventsComputationRequestIdRef.current;
 
-  const formEvents = useMemo<AgendaCalendarEvent[]>(() => {
-    const events: AgendaCalendarEvent[] = [];
-    for (const form of forms) {
-      const formDate = resolveFormDate(form);
-      if (formDate === null) {
-        continue;
+    const compute = async () => {
+      const buckets = await computeEventsByDateOnRuntime(sessionsByMonth, activities, forms);
+      if (requestId !== eventsComputationRequestIdRef.current || !isMountedRef.current) {
+        return;
       }
-      events.push({
-        id: form.id,
-        title: form.title,
-        startsAt: formDate,
-        endsAt: formDate,
-        type: "form",
-        color: "#9D7FEA",
-        patientName: form.patientName,
+
+      // 🚀 PERFORMANCE: mapa final de eventos aplicado em transição para evitar custo de agregação dentro do render.
+      startTransition(() => {
+        setEventsByDate(mapBucketsToMap(buckets));
       });
-    }
-    return events;
-  }, [forms]);
+    };
 
-  const eventsByDate = useMemo(() => {
-    const grouped = new Map<string, AgendaCalendarEvent[]>();
-
-    for (const event of [...sessionEvents, ...activityEvents, ...formEvents]) {
-      const dateKey = toDateKeyFromIso(event.startsAt);
-      const bucket = grouped.get(dateKey);
-      if (bucket) {
-        bucket.push(event);
-      } else {
-        grouped.set(dateKey, [event]);
-      }
-    }
-
-    for (const [dateKey, events] of grouped.entries()) {
-      grouped.set(
-        dateKey,
-        [...events].sort(
-          (left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
-        ),
-      );
-    }
-    return grouped;
-  }, [activityEvents, formEvents, sessionEvents]);
+    void compute();
+  }, [activities, computeEventsByDateOnRuntime, forms, sessionsByMonth]);
 
   const handleFocusedMonthChange = useCallback(
     (monthDate: Date) => {
@@ -541,25 +773,87 @@ export function PsychologistAgendaScreen({
 
   const handleScopeChange = useCallback(
     (nextScope: AppleCalendarScope) => {
+      if (nextScope === "day") {
+        if (scope !== "day") {
+          previousScopeBeforeDayRef.current = scope;
+          previousModeBeforeDayRef.current = mode;
+        }
+        setMode("list");
+        setScope("day");
+        setErrorMessage(null);
+        return;
+      }
+
       setScope(nextScope);
       if (nextScope === "month") {
+        // 🚀 PERFORMANCE: remove modo compacto e garante entrada em Lista ao sair da visão anual.
+        setMode("list");
         setSelectedDateKey((current) => normalizeSelectedDateForMonth(current, focusedMonth));
       }
       setErrorMessage(null);
     },
-    [focusedMonth],
+    [focusedMonth, mode, scope],
   );
 
   const handleToggleScope = useCallback(() => {
     setScope((current) => {
+      if (current === "day") {
+        const previousScope =
+          previousScopeBeforeDayRef.current === "day" ? "month" : previousScopeBeforeDayRef.current;
+        setMode(previousModeBeforeDayRef.current);
+        if (previousScope === "month") {
+          setSelectedDateKey((dateKey) => normalizeSelectedDateForMonth(dateKey, focusedMonth));
+        }
+        return previousScope;
+      }
+
       const next = current === "year" ? "month" : "year";
       if (next === "month") {
+        // 🚀 PERFORMANCE: alternância de escopo sempre entra em Lista para evitar fallback de layout legado.
+        setMode("list");
         setSelectedDateKey((dateKey) => normalizeSelectedDateForMonth(dateKey, focusedMonth));
       }
       return next;
     });
     setErrorMessage(null);
   }, [focusedMonth]);
+
+  const handleSelectDate = useCallback((dateKey: string) => {
+    setSelectedDateKey(dateKey);
+    const targetMonth = monthScopeFromDateKey(dateKey);
+    // 🚀 PERFORMANCE: evita atualizar focusedMonth quando o mês não mudou (previne re-render global e reload desnecessário).
+    setFocusedMonth((current) => {
+      if (
+        current.getFullYear() === targetMonth.getFullYear() &&
+        current.getMonth() === targetMonth.getMonth()
+      ) {
+        return current;
+      }
+      return targetMonth;
+    });
+  }, []);
+
+  const handleOpenDayView = useCallback(
+    (dateKey: string) => {
+      handleSelectDate(dateKey);
+      if (scope !== "day") {
+        previousScopeBeforeDayRef.current = scope;
+        previousModeBeforeDayRef.current = mode;
+      }
+      setMode("list");
+      setScope("day");
+      setErrorMessage(null);
+    },
+    [handleSelectDate, mode, scope],
+  );
+
+  const handleExitDayView = useCallback(() => {
+    const previousScope =
+      previousScopeBeforeDayRef.current === "day" ? "month" : previousScopeBeforeDayRef.current;
+    setMode(previousModeBeforeDayRef.current);
+    setScope(previousScope);
+    setErrorMessage(null);
+  }, []);
 
   const handleJumpToToday = useCallback(() => {
     const now = new Date();
@@ -598,9 +892,45 @@ export function PsychologistAgendaScreen({
     setErrorMessage(null);
     setFlowStatusByMode(INITIAL_FLOW_STATUS);
     setFlowErrorsByMode(INITIAL_FLOW_ERRORS);
-    void loadContextData();
-    void loadAssignTemplates();
-  }, [loadAssignTemplates, loadContextData]);
+    // 🚀 PERFORMANCE: evita recarregar contexto/templates sem necessidade ao abrir o sheet.
+    if (!contextLoadedRef.current) {
+      void loadContextData();
+    }
+    if (activityTemplates.length === 0 || formTemplates.length === 0) {
+      void loadAssignTemplates();
+    }
+  }, [activityTemplates.length, formTemplates.length, loadAssignTemplates, loadContextData]);
+
+  const handleRescheduleSessionFromDayView = useCallback(
+    async (sessionId: string, nextStartAtIso: string, nextEndAtIso: string): Promise<boolean> => {
+      if (accessToken === null) {
+        setErrorMessage("Sessao expirada. Entre novamente.");
+        return false;
+      }
+
+      try {
+        const updatedSession = await apiClient.applySessionAction(accessToken, sessionId, {
+          action: "reschedule",
+          scheduledStartAt: nextStartAtIso,
+          scheduledEndAt: nextEndAtIso,
+        });
+
+        setSessionsByMonth((current) => upsertSessionIntoMonth(current, updatedSession));
+        setInfoMessage("Sessao reagendada com sucesso.");
+        setErrorMessage(null);
+        return true;
+      } catch (requestError) {
+        setErrorMessage(
+          resolveAsyncErrorMessage(
+            requestError,
+            "Falha ao reagendar sessao na visualizacao por dia.",
+          ),
+        );
+        return false;
+      }
+    },
+    [accessToken, apiClient],
+  );
 
   const handleAssignSession = useCallback(
     async (draft: AssignSessionDraft) => {
@@ -860,6 +1190,7 @@ export function PsychologistAgendaScreen({
           mode={mode}
           onToday={handleJumpToToday}
           onOpenCreate={openCreateSheet}
+          onOpenDayView={() => handleOpenDayView(selectedDateKey)}
           onToggleScope={handleToggleScope}
           onPrev={handlePrevPeriod}
           onNext={handleNextPeriod}
@@ -870,11 +1201,13 @@ export function PsychologistAgendaScreen({
   }, [
     handleJumpToToday,
     handleNextPeriod,
+    handleOpenDayView,
     handlePrevPeriod,
     handleToggleScope,
     mode,
     navigation,
     openCreateSheet,
+    selectedDateKey,
     scope,
   ]);
 
@@ -894,10 +1227,10 @@ export function PsychologistAgendaScreen({
           focusedMonth={focusedMonth}
           eventsByDate={eventsByDate}
           onScopeChange={handleScopeChange}
-          onSelectDate={(dateKey) => {
-            setSelectedDateKey(dateKey);
-            setFocusedMonth(monthScopeFromDateKey(dateKey));
-          }}
+          onSelectDate={handleSelectDate}
+          onOpenDayView={handleOpenDayView}
+          onExitDayView={handleExitDayView}
+          onRescheduleSession={handleRescheduleSessionFromDayView}
           onFocusedMonthChange={handleFocusedMonthChange}
         />
       </View>

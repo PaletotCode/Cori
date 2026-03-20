@@ -1,8 +1,18 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 import { useNavigation } from "expo-router";
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -19,8 +29,11 @@ import {
   useWindowDimensions,
 } from "react-native";
 
-import { shellStyles } from "../../../shared/ui/shellStyles";
 import { typographyContract } from "../../../shared/ui/typography";
+import {
+  createDefaultKpiDeckPreferences,
+  type KpiDeckCardDefinition,
+} from "../../../shared/ui/KpiStackDeck";
 import {
   createActivitiesApiClient,
   type ActivitiesApiClient,
@@ -50,8 +63,16 @@ import { createPatientsApiClient, type PatientsApiClient } from "../api/patients
 import type {
   PatientDetail,
   PatientListItem,
+  PatientOverviewKpis,
   PatientTimelineEvent,
 } from "../api/types";
+import { PatientDetailHeroBanner } from "../components/detail/PatientDetailHeroBanner";
+import { PatientOverviewKpiCarousel } from "../components/detail/PatientOverviewKpiCarousel";
+import { PatientTimelineFilterChips } from "../components/detail/PatientTimelineFilterChips";
+import {
+  PatientWorkspaceFeed,
+  type PatientWorkspaceFeedItem,
+} from "../components/detail/PatientWorkspaceFeed";
 import { PatientCard } from "../components/PatientCard";
 import {
   PatientTimelineFeed,
@@ -66,7 +87,12 @@ const sessionsApiClient = createSessionsApiClient();
 const PATIENTS_PULL_HINT_SEEN_STORAGE_KEY = "patients.pull_hint_seen.v1";
 
 type PatientsStep = "list" | "detail";
-type PatientDetailTab = "overview" | "activities" | "forms" | "timeline";
+type IoniconName = ComponentProps<typeof Ionicons>["name"];
+type PatientOverviewCardId =
+  | "completed_sessions"
+  | "upcoming_sessions"
+  | "assigned_activities"
+  | "patient_journey_days";
 type TimelineCategoryFilter =
   | NotificationCategory
   | "profile"
@@ -75,7 +101,6 @@ type TimelineCategoryFilter =
 
 interface CombinedTimelineItem extends PatientTimelineFeedItem {
   category: TimelineCategoryFilter;
-  createdAtRaw: string;
 }
 
 interface PatientChangePreview {
@@ -91,13 +116,6 @@ interface PsychologistPatientsScreenProps {
   formsClient?: FormsApiClient;
   sessionsClient?: SessionsApiClient;
 }
-
-const DETAIL_TABS: { key: PatientDetailTab; label: string }[] = [
-  { key: "overview", label: "Resumo" },
-  { key: "activities", label: "Atividades" },
-  { key: "forms", label: "Formularios" },
-  { key: "timeline", label: "Timeline" },
-];
 
 const TIMELINE_CATEGORY_FILTERS: TimelineCategoryFilter[] = [
   "sessions",
@@ -117,7 +135,7 @@ const TIMELINE_CATEGORY_LABEL: Record<TimelineCategoryFilter, string> = {
   forms: "Formularios",
   documents: "Documentos",
   notifications: "Notificacoes",
-  app_usage: "App",
+  app_usage: "ABP",
   profile: "Cadastro",
   changes: "Mudancas",
   payments: "Pagamentos",
@@ -133,6 +151,18 @@ const TIMELINE_ACCENT_COLOR: Record<TimelineCategoryFilter, string> = {
   profile: "#0F766E",
   changes: "#B45309",
   payments: "#16A34A",
+};
+
+const TIMELINE_CATEGORY_ICON: Record<TimelineCategoryFilter, IoniconName> = {
+  sessions: "calendar-outline",
+  activities: "pulse-outline",
+  forms: "document-text-outline",
+  documents: "document-attach-outline",
+  notifications: "notifications-outline",
+  app_usage: "phone-portrait-outline",
+  profile: "person-outline",
+  changes: "swap-horizontal-outline",
+  payments: "card-outline",
 };
 
 interface PatientsScreenCache {
@@ -157,14 +187,22 @@ interface WorkspaceCollections {
 
 const REQUEST_ABORTED_ERROR_NAME = "PatientsScreenRequestAborted";
 const SESSIONS_FETCH_BATCH_SIZE = 4;
-const EMPTY_COMBINED_TIMELINE: CombinedTimelineItem[] = [];
-const EMPTY_TIMELINE_FEED: PatientTimelineFeedItem[] = [];
+const PATIENTS_PAGE_SIZE = 40;
+const TIMELINE_PAGE_SIZE = 3;
+const WORKSPACE_PAGE_SIZE = 3;
 const DETAIL_WORKSPACE_LOAD_DEFER_MS =
   process.env.PATIENTS_PERF_SIM === "1"
     ? 230
     : process.env.NODE_ENV === "test"
       ? 0
       : 230;
+
+const OVERVIEW_DECK_PREFERENCES = createDefaultKpiDeckPreferences<PatientOverviewCardId>([
+  "completed_sessions",
+  "upcoming_sessions",
+  "assigned_activities",
+  "patient_journey_days",
+]);
 
 let patientsScreenCache: PatientsScreenCache | null = null;
 
@@ -252,17 +290,6 @@ function daysUntilNextBirthday(birthDateIso: string | null): number | null {
   return Math.max(0, Math.round(diffMs / (1000 * 60 * 60 * 24)));
 }
 
-function formatDatePtBr(isoDate: string | null): string {
-  if (!isoDate) {
-    return "Nao informado";
-  }
-  const parsed = new Date(isoDate);
-  if (Number.isNaN(parsed.getTime())) {
-    return "Nao informado";
-  }
-  return parsed.toLocaleDateString("pt-BR");
-}
-
 function formatDateTimePtBr(isoDate: string): string {
   const parsed = new Date(isoDate);
   if (Number.isNaN(parsed.getTime())) {
@@ -271,41 +298,48 @@ function formatDateTimePtBr(isoDate: string): string {
   return parsed.toLocaleString("pt-BR");
 }
 
+function formatTimelineEventLabel(rawLabel: string): string {
+  const normalized = rawLabel.replace(/[_-]+/g, " ").trim();
+  if (normalized.length === 0) {
+    return "Atualizacao";
+  }
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function summarizePayload(payload: Record<string, unknown>): string {
+  const entries = Object.entries(payload).slice(0, 2);
+  if (entries.length === 0) {
+    return "Atualizacao registrada na timeline do paciente.";
+  }
+  const summary = entries
+    .map(([key, value]) => `${formatTimelineEventLabel(key)}: ${String(value)}`)
+    .join(" | ");
+  return `Detalhes: ${summary}`;
+}
+
+function pickNaturalText(value: string | null | undefined, fallback: string): string {
+  const normalized = value?.trim() ?? "";
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function firstValidDate(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+  }
+  return null;
+}
+
 function toDateKey(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function formatPatientTenure(createdAt: string): string {
-  const created = new Date(createdAt);
-  if (Number.isNaN(created.getTime())) {
-    return "Nao disponivel";
-  }
-
-  const now = new Date();
-  const diffMs = now.getTime() - created.getTime();
-  if (diffMs < 0) {
-    return "Recem cadastrado";
-  }
-
-  const totalDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  if (totalDays < 30) {
-    return `${totalDays} dia${totalDays === 1 ? "" : "s"}`;
-  }
-
-  const totalMonths = Math.floor(totalDays / 30);
-  if (totalMonths < 12) {
-    return `${totalMonths} mes${totalMonths === 1 ? "" : "es"}`;
-  }
-
-  const years = Math.floor(totalMonths / 12);
-  const months = totalMonths % 12;
-  if (months === 0) {
-    return `${years} ano${years === 1 ? "" : "s"}`;
-  }
-  return `${years}a ${months}m`;
 }
 
 function resolveSummary(patient: PatientListItem, detail: PatientDetail | null): string {
@@ -377,6 +411,34 @@ function resolvePatientSearchBlob(patient: PatientListItem, detail: PatientDetai
 
 function sanitizePhoneForDial(phone: string): string {
   return phone.replace(/[^\d+]/g, "");
+}
+
+function resolvePhoneActionLabel(phone: string | null): string {
+  const normalized = phone?.trim() ?? "";
+  return normalized.length >= 8 ? normalized : "";
+}
+
+function resolveOverviewComparisonValues(
+  card:
+    | PatientOverviewKpis["cards"][number]
+    | null,
+): Record<"yesterday" | "weekAgo" | "monthAgo", number | null> {
+  if (card === null) {
+    return {
+      yesterday: null,
+      weekAgo: null,
+      monthAgo: null,
+    };
+  }
+
+  const byItem = new Map(
+    card.comparisons.map((comparison) => [comparison.item, comparison.baselineValue] as const),
+  );
+  return {
+    yesterday: byItem.get("yesterday") ?? null,
+    weekAgo: byItem.get("weekAgo") ?? null,
+    monthAgo: byItem.get("monthAgo") ?? null,
+  };
 }
 
 function isTokenInvalidMessage(error: unknown): boolean {
@@ -515,26 +577,31 @@ export function PsychologistPatientsScreen({
     transitionStateRef.current = { step, value: new Animated.Value(0) };
   }
   const transition = transitionStateRef.current.value;
+  const tabEntryMotion = useRef(new Animated.Value(0)).current;
 
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
-  const [detailTab, setDetailTab] = useState<PatientDetailTab>("overview");
 
   const [selectedPatientDetail, setSelectedPatientDetail] = useState<PatientDetail | null>(null);
   const [selectedPatientChanges, setSelectedPatientChanges] = useState<PatientChangePreview[]>([]);
   const [selectedPatientProfileTimeline, setSelectedPatientProfileTimeline] = useState<PatientTimelineEvent[]>([]);
   const [selectedUnifiedTimeline, setSelectedUnifiedTimeline] = useState<UnifiedTimelineEvent[]>([]);
   const [selectedDeliveries, setSelectedDeliveries] = useState<NotificationDelivery[]>([]);
-  const [selectedNotificationPreferences, setSelectedNotificationPreferences] =
+  const [, setSelectedNotificationPreferences] =
     useState<NotificationPreferences | null>(null);
   const [selectedActivities, setSelectedActivities] = useState<ActivityItem[]>([]);
   const [selectedForms, setSelectedForms] = useState<ClinicalFormListItem[]>([]);
   const [selectedSessions, setSelectedSessions] = useState<SessionAgendaItem[]>([]);
+  const [selectedOverviewKpis, setSelectedOverviewKpis] = useState<PatientOverviewKpis | null>(null);
 
   const [listLoading, setListLoading] = useState(false);
+  const [listLoadingMore, setListLoadingMore] = useState(false);
   const [listHydrating, setListHydrating] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [hasLoadedList, setHasLoadedList] = useState(
     () => patientsScreenCache?.hasLoadedList ?? false,
+  );
+  const [hasMorePatients, setHasMorePatients] = useState(
+    () => (patientsScreenCache?.patients.length ?? 0) >= PATIENTS_PAGE_SIZE,
   );
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const [showPullHint, setShowPullHint] = useState(false);
@@ -553,11 +620,14 @@ export function PsychologistPatientsScreen({
     changes: true,
     payments: true,
   });
+  const [timelinePage, setTimelinePage] = useState(1);
+  const [workspacePage, setWorkspacePage] = useState(1);
 
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
   const listLoadRequestIdRef = useRef(0);
+  const listLoadMoreRequestIdRef = useRef(0);
   const detailsHydrationRequestIdRef = useRef(0);
   const detailLoadRequestIdRef = useRef(0);
   const hasLoadedListRef = useRef(hasLoadedList);
@@ -620,8 +690,35 @@ export function PsychologistPatientsScreen({
   }, [hasLoadedList]);
 
   useEffect(() => {
+    // 🚀 PERFORMANCE: reinicia a paginação local da timeline para evitar renderização massiva ao trocar paciente/filtros.
+    setTimelinePage(1);
+  }, [selectedPatientId, timelineFilters]);
+
+  useEffect(() => {
+    setWorkspacePage(1);
+  }, [selectedPatientId]);
+
+  useEffect(() => {
     stepRef.current = step;
   }, [step]);
+
+  useFocusEffect(
+    useCallback(() => {
+      // 🚀 PERFORMANCE: reaplica a entrada suave ao focar via troca de abas (ex.: Painel -> Pacientes).
+      tabEntryMotion.setValue(0);
+      const animation = Animated.timing(tabEntryMotion, {
+        toValue: 1,
+        duration: 240,
+        useNativeDriver: true,
+      });
+      animation.start();
+
+      return () => {
+        animation.stop();
+        tabEntryMotion.setValue(0);
+      };
+    }, [tabEntryMotion]),
+  );
 
   useEffect(() => {
     // 🚀 PERFORMANCE: replica a transição da Agenda no conteúdo alvo após trocar de passo.
@@ -774,6 +871,7 @@ export function PsychologistPatientsScreen({
     listAbortControllerRef.current = controller;
 
     setListLoading(!hasLoadedListRef.current);
+    setListLoadingMore(false);
     setError(null);
     try {
       const list = await runWithTokenRetry(
@@ -781,6 +879,8 @@ export function PsychologistPatientsScreen({
           apiClient.list(token, {
             sortBy: "full_name",
             sortOrder: "asc",
+            limit: PATIENTS_PAGE_SIZE,
+            offset: 0,
           }),
         controller.signal,
       );
@@ -793,6 +893,7 @@ export function PsychologistPatientsScreen({
       startTransition(() => {
         setPatients(list);
         setHasLoadedList(true);
+        setHasMorePatients(list.length === PATIENTS_PAGE_SIZE);
       });
       void hydratePatientCardDetails(list, controller.signal);
     } catch (requestError) {
@@ -810,6 +911,70 @@ export function PsychologistPatientsScreen({
       }
     }
   }, [accessToken, apiClient, hydratePatientCardDetails, runWithTokenRetry]);
+
+  const loadMorePatients = useCallback(async () => {
+    if (accessToken === null || listLoading || listLoadingMore || !hasMorePatients) {
+      return;
+    }
+
+    const requestId = ++listLoadMoreRequestIdRef.current;
+    setListLoadingMore(true);
+    setError(null);
+
+    try {
+      const page = await runWithTokenRetry((token) =>
+        apiClient.list(token, {
+          sortBy: "full_name",
+          sortOrder: "asc",
+          limit: PATIENTS_PAGE_SIZE,
+          offset: patients.length,
+        }),
+      );
+
+      if (requestId !== listLoadMoreRequestIdRef.current || !isMountedRef.current) {
+        return;
+      }
+
+      setHasMorePatients(page.length === PATIENTS_PAGE_SIZE);
+      if (page.length === 0) {
+        return;
+      }
+
+      startTransition(() => {
+        setPatients((current) => {
+          const existingIds = new Set(current.map((item) => item.id));
+          const freshItems = page.filter((item) => !existingIds.has(item.id));
+          if (freshItems.length === 0) {
+            return current;
+          }
+          return [...current, ...freshItems];
+        });
+      });
+      void hydratePatientCardDetails(page);
+    } catch (requestError) {
+      if (isRequestAbortedError(requestError)) {
+        return;
+      }
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Falha ao carregar mais pacientes.",
+      );
+    } finally {
+      if (requestId === listLoadMoreRequestIdRef.current && isMountedRef.current) {
+        setListLoadingMore(false);
+      }
+    }
+  }, [
+    accessToken,
+    apiClient,
+    hasMorePatients,
+    hydratePatientCardDetails,
+    listLoading,
+    listLoadingMore,
+    patients.length,
+    runWithTokenRetry,
+  ]);
 
   const loadSelectedPatientWorkspace = useCallback(
     async (patientId: string) => {
@@ -867,7 +1032,21 @@ export function PsychologistPatientsScreen({
           setSelectedActivities([]);
           setSelectedForms([]);
           setSelectedSessions([]);
+          setSelectedOverviewKpis(null);
         });
+
+        const overviewKpisPromise =
+          apiClient.getOverviewKpis !== undefined
+            ? runWithTokenRetry(
+                (token) =>
+                  apiClient.getOverviewKpis!(
+                    token,
+                    patientId,
+                    Intl.DateTimeFormat().resolvedOptions().timeZone,
+                  ),
+                controller.signal,
+              )
+            : Promise.resolve<PatientOverviewKpis | null>(null);
 
         const [
           changesResult,
@@ -877,6 +1056,7 @@ export function PsychologistPatientsScreen({
           preferencesResult,
           activitiesResult,
           formsResult,
+          overviewKpisResult,
         ] = await Promise.allSettled([
           runWithTokenRetry((token) => apiClient.listChanges(token, patientId, 120), controller.signal),
           runWithTokenRetry((token) => apiClient.listTimelineEvents(token, patientId, 160), controller.signal),
@@ -898,6 +1078,7 @@ export function PsychologistPatientsScreen({
           ),
           runWithTokenRetry((token) => activitiesClient.listActivities(token, { limit: 500 }), controller.signal),
           runWithTokenRetry((token) => formsClient.listForms(token, { limit: 500 }), controller.signal),
+          overviewKpisPromise,
         ]);
         assertRequestActive();
 
@@ -911,7 +1092,10 @@ export function PsychologistPatientsScreen({
                     : "sem campos detalhados";
                 return {
                   id: entry.id,
-                  summary: `${entry.changeType} | ${fields} | ${when}`,
+                  summary: pickNaturalText(
+                    entry.naturalSummary,
+                    `${entry.changeType} | ${fields} | ${when}`,
+                  ),
                   createdAt: entry.createdAt,
                 };
               })
@@ -958,6 +1142,7 @@ export function PsychologistPatientsScreen({
           preferencesResult,
           activitiesResult,
           formsResult,
+          overviewKpisResult,
         ].some((result) => result.status === "rejected");
         const hasAnyPartialFailure = partialFailures || sessionsLoadFailed;
 
@@ -977,6 +1162,9 @@ export function PsychologistPatientsScreen({
           setSelectedActivities(nextCollections.activities);
           setSelectedForms(nextCollections.forms);
           setSelectedSessions(nextSessions);
+          setSelectedOverviewKpis(
+            overviewKpisResult.status === "fulfilled" ? overviewKpisResult.value : null,
+          );
           setInfo(
             hasAnyPartialFailure
               ? "Perfil carregado com dados parciais. Atualize para sincronizar tudo."
@@ -1028,8 +1216,8 @@ export function PsychologistPatientsScreen({
   }, [hasLoadedList, patientDetailsById, patients]);
 
   const headerSearchWidth = useMemo(() => {
-    const relative = Math.round(viewportWidth * 0.31);
-    return Math.min(176, Math.max(112, relative));
+    const relative = Math.round(viewportWidth * 0.45);
+    return Math.min(264, Math.max(184, relative));
   }, [viewportWidth]);
 
   useLayoutEffect(() => {
@@ -1044,7 +1232,7 @@ export function PsychologistPatientsScreen({
                   onChangeText={setSearchQuery}
                   onFocus={() => setSearchFocused(true)}
                   onBlur={() => setSearchFocused(false)}
-                  placeholder={searchFocused ? "" : "Buscar"}
+                  placeholder={searchFocused ? "" : "Buscar contatos"}
                   placeholderTextColor="#94A3B8"
                   style={styles.headerSearchInput}
                   autoCapitalize="none"
@@ -1089,6 +1277,26 @@ export function PsychologistPatientsScreen({
   const detailPatient = selectedPatientDetail ??
     (selectedPatientId ? patientDetailsById[selectedPatientId] ?? null : null);
 
+  const detailInitials = useMemo(() => {
+    if (detailPatient === null) {
+      return "P";
+    }
+    const initials = detailPatient.fullName
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((token) => token[0]?.toUpperCase() ?? "")
+      .join("");
+    return initials.length > 0 ? initials : "P";
+  }, [detailPatient]);
+
+  const detailPhone = (detailPatient?.phone ?? "").trim();
+  const detailEmail = (detailPatient?.email ?? "").trim();
+  const detailWhatsAppDisabled = detailPhone.length < 8 && detailEmail.length === 0;
+  const detailPhoneDisabled = detailPhone.length < 8;
+  const detailEmergencyDisabled =
+    (detailPatient?.emergencyContactPhone?.trim() ?? "").length < 8;
+  const detailPhoneActionLabel = resolvePhoneActionLabel(detailPatient?.phone ?? null);
+
   const completedSessionsCount = useMemo(
     () => selectedSessions.filter((item) => item.status === "completed").length,
     [selectedSessions],
@@ -1105,52 +1313,152 @@ export function PsychologistPatientsScreen({
     }).length;
   }, [selectedSessions]);
 
-  const combinedTimeline = useMemo<CombinedTimelineItem[]>(() => {
-    if (detailTab !== "timeline") {
-      // 🚀 PERFORMANCE: evita montar/sortear timeline completa quando o usuario nao esta na aba de timeline.
-      return EMPTY_COMBINED_TIMELINE;
-    }
+  const assignedActivitiesCount = selectedActivities.length;
 
+  const patientJourneyDays = useMemo(() => {
+    const createdAtRaw = detailPatient?.createdAt ?? null;
+    if (createdAtRaw === null) {
+      return 0;
+    }
+    const createdAtMs = new Date(createdAtRaw).getTime();
+    if (!Number.isFinite(createdAtMs)) {
+      return 0;
+    }
+    const diffMs = Date.now() - createdAtMs;
+    if (diffMs < 0) {
+      return 0;
+    }
+    return Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+  }, [detailPatient?.createdAt]);
+
+  const overviewDeckHeight = useMemo(() => {
+    if (viewportWidth <= 360) {
+      return 136;
+    }
+    if (viewportWidth <= 390) {
+      return 126;
+    }
+    return 118;
+  }, [viewportWidth]);
+
+  const overviewCardsByKey = useMemo(() => {
+    const byKey = new Map<PatientOverviewCardId, PatientOverviewKpis["cards"][number]>();
+    for (const card of selectedOverviewKpis?.cards ?? []) {
+      if (
+        card.key === "completed_sessions" ||
+        card.key === "upcoming_sessions" ||
+        card.key === "assigned_activities" ||
+        card.key === "patient_journey_days"
+      ) {
+        byKey.set(card.key, card);
+      }
+    }
+    return byKey;
+  }, [selectedOverviewKpis]);
+
+  const completedSessionsOverviewDefinition = useMemo<
+    KpiDeckCardDefinition<PatientOverviewCardId>
+  >(() => {
+    const card = overviewCardsByKey.get("completed_sessions") ?? null;
+    return {
+      id: "completed_sessions",
+      title: "Sessoes realizadas",
+      format: "count",
+      value: card?.currentValue ?? completedSessionsCount,
+      comparisonValues: resolveOverviewComparisonValues(card),
+      nounSingular: "sessao",
+      nounPlural: "sessoes",
+      emptyValueText: "0",
+      noCurrentDataText: "Sem historico de sessao.",
+    };
+  }, [completedSessionsCount, overviewCardsByKey]);
+
+  const upcomingSessionsOverviewDefinition = useMemo<
+    KpiDeckCardDefinition<PatientOverviewCardId>
+  >(() => {
+    const card = overviewCardsByKey.get("upcoming_sessions") ?? null;
+    return {
+      id: "upcoming_sessions",
+      title: "Sessoes futuras",
+      format: "count",
+      value: card?.currentValue ?? upcomingSessionsCount,
+      comparisonValues: resolveOverviewComparisonValues(card),
+      nounSingular: "sessao",
+      nounPlural: "sessoes",
+      emptyValueText: "0",
+      noCurrentDataText: "Sem agenda futura.",
+    };
+  }, [overviewCardsByKey, upcomingSessionsCount]);
+
+  const assignedActivitiesOverviewDefinition = useMemo<
+    KpiDeckCardDefinition<PatientOverviewCardId>
+  >(() => {
+    const card = overviewCardsByKey.get("assigned_activities") ?? null;
+    return {
+      id: "assigned_activities",
+      title: "Atividades atribuidas",
+      format: "count",
+      value: card?.currentValue ?? assignedActivitiesCount,
+      comparisonValues: resolveOverviewComparisonValues(card),
+      nounSingular: "atividade",
+      nounPlural: "atividades",
+      emptyValueText: "0",
+      noCurrentDataText: "Sem atividades atribuídas.",
+    };
+  }, [assignedActivitiesCount, overviewCardsByKey]);
+
+  const patientJourneyOverviewDefinition = useMemo<
+    KpiDeckCardDefinition<PatientOverviewCardId>
+  >(() => {
+    const card = overviewCardsByKey.get("patient_journey_days") ?? null;
+    return {
+      id: "patient_journey_days",
+      title: "Tempo de paciente",
+      format: "count",
+      value: card?.currentValue ?? patientJourneyDays,
+      comparisonValues: resolveOverviewComparisonValues(card),
+      nounSingular: "dia",
+      nounPlural: "dias",
+      emptyValueText: "0",
+      noCurrentDataText: "Tempo de vínculo indisponível.",
+    };
+  }, [overviewCardsByKey, patientJourneyDays]);
+
+  const combinedTimeline = useMemo<CombinedTimelineItem[]>(() => {
     const items: CombinedTimelineItem[] = [];
 
     for (const event of selectedUnifiedTimeline) {
       const category = classifyUnifiedEventCategory(event);
-      const payloadEntries = Object.entries(event.payload).slice(0, 2);
-      const payloadPreview = payloadEntries
-        .map(([key, value]) => `${key}: ${String(value)}`)
-        .join(" | ");
-
+      const fallbackTitle = formatTimelineEventLabel(event.eventType);
       items.push({
         id: `unified-${event.id}`,
         category,
-        title: `${TIMELINE_CATEGORY_LABEL[category]} | ${event.eventType}`,
-        subtitle:
-          payloadPreview.length > 0
-            ? payloadPreview
-            : `Interacao registrada por ${event.actorType}.`,
-        timestampLabel: formatDateTimePtBr(event.createdAt),
+        categoryLabel: pickNaturalText(event.categoryLabel, TIMELINE_CATEGORY_LABEL[category]),
+        title: pickNaturalText(event.naturalTitle, fallbackTitle),
+        eventLabel: pickNaturalText(
+          event.naturalEventLabel,
+          `Feito por ${formatTimelineEventLabel(event.actorLabel ?? event.actorType).toLowerCase()}`,
+        ),
+        detail: pickNaturalText(event.naturalDetail, summarizePayload(event.payload)),
+        occurredAt: event.createdAt,
         accentColor: TIMELINE_ACCENT_COLOR[category],
-        createdAtRaw: event.createdAt,
       });
     }
 
     for (const event of selectedPatientProfileTimeline) {
-      const payloadEntries = Object.entries(event.payload).slice(0, 2);
-      const payloadPreview = payloadEntries
-        .map(([key, value]) => `${key}: ${String(value)}`)
-        .join(" | ");
-
+      const fallbackTitle = formatTimelineEventLabel(event.eventType);
       items.push({
         id: `profile-${event.id}`,
         category: "profile",
-        title: `Cadastro | ${event.eventType}`,
-        subtitle:
-          payloadPreview.length > 0
-            ? payloadPreview
-            : `Evento cadastral por ${event.actorType}.`,
-        timestampLabel: formatDateTimePtBr(event.createdAt),
+        categoryLabel: pickNaturalText(event.categoryLabel, TIMELINE_CATEGORY_LABEL.profile),
+        title: pickNaturalText(event.naturalTitle, fallbackTitle),
+        eventLabel: pickNaturalText(
+          event.naturalEventLabel,
+          `Feito por ${formatTimelineEventLabel(event.actorLabel ?? event.actorType).toLowerCase()}`,
+        ),
+        detail: pickNaturalText(event.naturalDetail, summarizePayload(event.payload)),
+        occurredAt: event.createdAt,
         accentColor: TIMELINE_ACCENT_COLOR.profile,
-        createdAtRaw: event.createdAt,
       });
     }
 
@@ -1158,53 +1466,242 @@ export function PsychologistPatientsScreen({
       items.push({
         id: `changes-${entry.id}`,
         category: "changes",
-        title: "Mudanca de cadastro",
-        subtitle: entry.summary,
-        timestampLabel: "Historico de alteracao",
+        categoryLabel: TIMELINE_CATEGORY_LABEL.changes,
+        title: "Cadastro atualizado",
+        eventLabel: "Historico de alteracoes",
+        detail: entry.summary,
+        occurredAt: entry.createdAt,
         accentColor: TIMELINE_ACCENT_COLOR.changes,
-        createdAtRaw: entry.createdAt,
       });
     }
 
     for (const delivery of selectedDeliveries) {
+      const deliveryOccurredAt =
+        firstValidDate(
+          delivery.openedAt,
+          delivery.deliveredAt,
+          delivery.sentAt,
+          delivery.failedAt,
+          delivery.queuedAt,
+          delivery.createdAt,
+        ) ?? delivery.createdAt;
+      const deliveryBody = typeof delivery.body === "string" ? delivery.body.trim() : "";
+      const deliveryReason = delivery.statusReason?.trim() ?? "";
       items.push({
         id: `delivery-${delivery.id}`,
         category: "notifications",
-        title: `Entrega | ${delivery.title}`,
-        subtitle: `${delivery.status} | ${delivery.category}`,
-        timestampLabel: formatDateTimePtBr(delivery.createdAt),
+        categoryLabel: pickNaturalText(
+          delivery.categoryLabel,
+          TIMELINE_CATEGORY_LABEL.notifications,
+        ),
+        title: pickNaturalText(delivery.naturalTitle, delivery.title),
+        eventLabel: pickNaturalText(
+          delivery.naturalEventLabel,
+          `Status da entrega: ${formatTimelineEventLabel(delivery.status)}`,
+        ),
+        detail: pickNaturalText(
+          delivery.naturalDetail,
+          deliveryBody.length > 0
+            ? deliveryBody
+            : deliveryReason.length > 0
+              ? deliveryReason
+              : `Evento ${formatTimelineEventLabel(delivery.eventType)} sem corpo detalhado.`,
+        ),
+        occurredAt: deliveryOccurredAt,
         accentColor: TIMELINE_ACCENT_COLOR.notifications,
-        createdAtRaw: delivery.createdAt,
+      });
+    }
+
+    if (selectedUnifiedTimeline.length === 0) {
+      // 🚀 PERFORMANCE: fallback local evita timeline vazia quando o endpoint unificado não retorna payload.
+      for (const session of selectedSessions) {
+        items.push({
+          id: `session-fallback-${session.id}`,
+          category: "sessions",
+          categoryLabel: TIMELINE_CATEGORY_LABEL.sessions,
+          title: `Sessao com ${session.patientName}`,
+          eventLabel: formatTimelineEventLabel(session.status),
+          detail: `Inicio em ${formatDateTimePtBr(session.scheduledStartAt)}.`,
+          occurredAt: session.scheduledStartAt,
+          accentColor: TIMELINE_ACCENT_COLOR.sessions,
+        });
+      }
+
+      for (const activity of selectedActivities) {
+        items.push({
+          id: `activity-fallback-${activity.id}`,
+          category: "activities",
+          categoryLabel: TIMELINE_CATEGORY_LABEL.activities,
+          title: activity.title,
+          eventLabel: `Status ${formatTimelineEventLabel(activity.status)}`,
+          detail: `Prazo ${formatDateTimePtBr(activity.dueAt)}.`,
+          occurredAt: activity.assignedAt,
+          accentColor: TIMELINE_ACCENT_COLOR.activities,
+        });
+      }
+
+      for (const form of selectedForms) {
+        const referenceDate =
+          form.scheduledSendAt ??
+          form.assignedAt ??
+          form.publishedAt ??
+          form.submittedAt ??
+          form.reviewedAt ??
+          "1970-01-01T00:00:00.000Z";
+        items.push({
+          id: `form-fallback-${form.id}`,
+          category: "forms",
+          categoryLabel: TIMELINE_CATEGORY_LABEL.forms,
+          title: form.title,
+          eventLabel: `Status ${formatTimelineEventLabel(form.status)}`,
+          detail: "Formulario sincronizado no prontuario do paciente.",
+          occurredAt: referenceDate,
+          accentColor: TIMELINE_ACCENT_COLOR.forms,
+        });
+      }
+    }
+
+    if (items.length === 0 && detailPatient !== null) {
+      items.push({
+        id: `profile-start-${detailPatient.id}`,
+        category: "profile",
+        categoryLabel: TIMELINE_CATEGORY_LABEL.profile,
+        title: "Cadastro do paciente",
+        eventLabel: "Registro inicial",
+        detail: "Nenhum evento adicional sincronizado ate agora.",
+        occurredAt: detailPatient.createdAt,
+        accentColor: TIMELINE_ACCENT_COLOR.profile,
       });
     }
 
     return items.sort(
-      (left, right) => new Date(right.createdAtRaw).getTime() - new Date(left.createdAtRaw).getTime(),
+      (left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime(),
     );
   }, [
-    detailTab,
+    selectedActivities,
     selectedDeliveries,
+    detailPatient,
+    selectedForms,
     selectedPatientChanges,
     selectedPatientProfileTimeline,
+    selectedSessions,
     selectedUnifiedTimeline,
   ]);
 
   const visibleTimeline = useMemo<PatientTimelineFeedItem[]>(
-    () => {
-      if (detailTab !== "timeline") {
-        return EMPTY_TIMELINE_FEED;
-      }
+    () => combinedTimeline.filter((item) => timelineFilters[item.category]),
+    [combinedTimeline, timelineFilters],
+  );
 
-      return combinedTimeline.filter((item) => timelineFilters[item.category]).map((item) => ({
+  const timelineTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(visibleTimeline.length / TIMELINE_PAGE_SIZE)),
+    [visibleTimeline.length],
+  );
+
+  const normalizedTimelinePage = Math.min(timelinePage, timelineTotalPages);
+
+  useEffect(() => {
+    if (timelinePage !== normalizedTimelinePage) {
+      setTimelinePage(normalizedTimelinePage);
+    }
+  }, [normalizedTimelinePage, timelinePage]);
+
+  const pagedTimeline = useMemo(
+    () => {
+      const start = (normalizedTimelinePage - 1) * TIMELINE_PAGE_SIZE;
+      return visibleTimeline.slice(start, start + TIMELINE_PAGE_SIZE);
+    },
+    [normalizedTimelinePage, visibleTimeline],
+  );
+
+  const timelineFilterChips = useMemo(
+    () =>
+      TIMELINE_CATEGORY_FILTERS.map((category) => ({
+        key: category,
+        label: TIMELINE_CATEGORY_LABEL[category],
+        active: timelineFilters[category],
+        icon: TIMELINE_CATEGORY_ICON[category],
+        tintColor: TIMELINE_ACCENT_COLOR[category],
+      })),
+    [timelineFilters],
+  );
+
+  const workspaceFeedItems = useMemo<PatientWorkspaceFeedItem[]>(() => {
+    type CandidateItem = PatientWorkspaceFeedItem & { sortAtMs: number };
+    const candidates: CandidateItem[] = [];
+
+    for (const activity of selectedActivities) {
+      const dueAtMs = new Date(activity.dueAt).getTime();
+      const assignedAtMs = new Date(activity.assignedAt).getTime();
+      const sortAtMs = Number.isFinite(dueAtMs)
+        ? dueAtMs
+        : Number.isFinite(assignedAtMs)
+          ? assignedAtMs
+          : 0;
+      candidates.push({
+        id: `activity-${activity.id}`,
+        kind: "activity",
+        title: activity.title,
+        status: activity.status,
+        whenLabel: `Prazo ${formatDateTimePtBr(activity.dueAt)}`,
+        accentColor: "#7C3AED",
+        sortAtMs,
+      });
+    }
+
+    for (const form of selectedForms) {
+      const scheduleMs = form.scheduledSendAt ? new Date(form.scheduledSendAt).getTime() : Number.NaN;
+      const assignedMs = form.assignedAt ? new Date(form.assignedAt).getTime() : Number.NaN;
+      const publishedMs = form.publishedAt ? new Date(form.publishedAt).getTime() : Number.NaN;
+      const sortAtMs = Number.isFinite(scheduleMs)
+        ? scheduleMs
+        : Number.isFinite(assignedMs)
+          ? assignedMs
+          : Number.isFinite(publishedMs)
+            ? publishedMs
+            : 0;
+      const whenRaw = form.scheduledSendAt ?? form.assignedAt ?? form.publishedAt ?? null;
+      candidates.push({
+        id: `form-${form.id}`,
+        kind: "form",
+        title: form.title,
+        status: form.status,
+        whenLabel: whenRaw ? `Atualizado ${formatDateTimePtBr(whenRaw)}` : "Sem data registrada",
+        accentColor: "#2563EB",
+        sortAtMs,
+      });
+    }
+
+    return candidates
+      .sort((left, right) => right.sortAtMs - left.sortAtMs)
+      .slice(0, 50)
+      .map((item) => ({
         id: item.id,
+        kind: item.kind,
         title: item.title,
-        subtitle: item.subtitle,
-        timestampLabel: item.timestampLabel,
+        status: item.status,
+        whenLabel: item.whenLabel,
         accentColor: item.accentColor,
       }));
-    },
-    [combinedTimeline, detailTab, timelineFilters],
+  }, [selectedActivities, selectedForms]);
+
+  const workspaceTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(workspaceFeedItems.length / WORKSPACE_PAGE_SIZE)),
+    [workspaceFeedItems.length],
   );
+
+  const normalizedWorkspacePage = Math.min(workspacePage, workspaceTotalPages);
+
+  useEffect(() => {
+    if (workspacePage !== normalizedWorkspacePage) {
+      setWorkspacePage(normalizedWorkspacePage);
+    }
+  }, [normalizedWorkspacePage, workspacePage]);
+
+  const pagedWorkspaceFeedItems = useMemo(() => {
+    const start = (normalizedWorkspacePage - 1) * WORKSPACE_PAGE_SIZE;
+    return workspaceFeedItems.slice(start, start + WORKSPACE_PAGE_SIZE);
+  }, [normalizedWorkspacePage, workspaceFeedItems]);
 
   const openDetail = useCallback(
     (patientId: string) => {
@@ -1222,9 +1719,9 @@ export function PsychologistPatientsScreen({
         setSelectedActivities([]);
         setSelectedForms([]);
         setSelectedSessions([]);
+        setSelectedOverviewKpis(null);
       });
       setSelectedPatientId(patientId);
-      setDetailTab("overview");
       setStep("detail");
 
       // 🚀 PERFORMANCE: adia hidratação pesada até o final da transição de container transform.
@@ -1248,7 +1745,6 @@ export function PsychologistPatientsScreen({
     }
     setDetailLoading(false);
     setStep("list");
-    setDetailTab("overview");
     setSelectedPatientId(null);
     setInfo(null);
     // 🚀 PERFORMANCE: limpeza pesada do detalhe ocorre após as interações para preservar fluidez no botão "Voltar".
@@ -1266,6 +1762,7 @@ export function PsychologistPatientsScreen({
         setSelectedActivities([]);
         setSelectedForms([]);
         setSelectedSessions([]);
+        setSelectedOverviewKpis(null);
       });
     });
   }, []);
@@ -1308,9 +1805,17 @@ export function PsychologistPatientsScreen({
 
       try {
         const phone = sanitizePhoneForDial(phoneRaw);
-        await Linking.openURL(`tel:${phone}`);
+        const phoneUrl = `tel:${phone}`;
+        const canOpen = await Linking.canOpenURL(phoneUrl);
+        if (!canOpen) {
+          setError(null);
+          setInfo("Ligacao indisponivel neste dispositivo.");
+          return;
+        }
+        await Linking.openURL(phoneUrl);
       } catch (requestError) {
-        setError(
+        setError(null);
+        setInfo(
           requestError instanceof Error
             ? requestError.message
             : "Nao foi possivel abrir o atalho de ligacao.",
@@ -1319,6 +1824,33 @@ export function PsychologistPatientsScreen({
     },
     [patientDetailsById, patientsById],
   );
+
+  const handleOpenEmergencyCall = useCallback(async () => {
+    const phoneRaw = detailPatient?.emergencyContactPhone?.trim() ?? "";
+    if (phoneRaw.length < 8) {
+      setError("Paciente sem telefone de emergencia valido.");
+      return;
+    }
+
+    try {
+      const phone = sanitizePhoneForDial(phoneRaw);
+      const phoneUrl = `tel:${phone}`;
+      const canOpen = await Linking.canOpenURL(phoneUrl);
+      if (!canOpen) {
+        setError(null);
+        setInfo("Ligacao de emergencia indisponivel neste dispositivo.");
+        return;
+      }
+      await Linking.openURL(phoneUrl);
+    } catch (requestError) {
+      setError(null);
+      setInfo(
+        requestError instanceof Error
+          ? requestError.message
+          : "Nao foi possivel abrir o atalho de emergencia.",
+      );
+    }
+  }, [detailPatient?.emergencyContactPhone]);
 
   const handleContactActionUnavailable = useCallback((message: string) => {
     setError(null);
@@ -1332,6 +1864,23 @@ export function PsychologistPatientsScreen({
         ...current,
         [category]: !current[category],
       }));
+    });
+  }, []);
+
+  const handleCheckAllTimelineCategories = useCallback(() => {
+    // 🚀 PERFORMANCE: atualização em lote evita re-render por checkbox individual.
+    startTransition(() => {
+      setTimelineFilters({
+        sessions: true,
+        activities: true,
+        forms: true,
+        documents: true,
+        notifications: true,
+        app_usage: true,
+        profile: true,
+        changes: true,
+        payments: true,
+      });
     });
   }, []);
 
@@ -1349,10 +1898,6 @@ export function PsychologistPatientsScreen({
       setPullRefreshing(false);
     }
   }, [loadPatients, loadSelectedPatientWorkspace, selectedPatientId, step]);
-
-  const detailDescription = detailPatient?.communicationNotes?.trim()
-    ? detailPatient.communicationNotes.trim()
-    : "Paciente sem descricao longa no cadastro. Use esta area para centralizar contexto clinico e observacoes recorrentes.";
 
   // 🚀 PERFORMANCE: pré-processa dados do card fora do renderItem para evitar lógica por célula durante scroll.
   const patientCardItems = useMemo<PatientCardListItem[]>(
@@ -1400,91 +1945,157 @@ export function PsychologistPatientsScreen({
 
   const renderPatientCardSeparator = useCallback(() => <View style={styles.cardSeparator} />, []);
 
+  const isInitialListLoading = listLoading && !hasLoadedList;
+  const hasListResults = patientCardItems.length > 0;
+
   return (
     <View style={styles.root}>
-      <ScrollView
-        contentContainerStyle={[styles.container, shellStyles.scrollContainer]}
-        refreshControl={
-          <RefreshControl
-            refreshing={pullRefreshing}
-            onRefresh={() => void handlePullToRefresh()}
-            tintColor="#0F766E"
-            colors={["#0F766E"]}
-          />
-        }
-      >
+      {step === "list" ? (
         <Animated.View
-          key={`patients-step-${step}`}
           style={[
-            styles.screenWrap,
+            styles.screenFocusWrap,
+            styles.listScreenWrap,
             {
-              opacity: transition,
+              opacity: tabEntryMotion,
               transform: [
                 {
-                  translateY: transition.interpolate({
+                  translateY: tabEntryMotion.interpolate({
                     inputRange: [0, 1],
-                    outputRange: [10, 0],
+                    outputRange: [8, 0],
                   }),
                 },
               ],
             },
           ]}
         >
-          {step === "list" ? (
-            <>
-              <View style={styles.listSummaryRow}>
-                <Text style={styles.listSummaryText}>
-                  {filteredPatients.length} paciente{filteredPatients.length === 1 ? "" : "s"} na listagem.
-                </Text>
-                {listHydrating || showPullHint ? (
-                  <View style={styles.listSummaryMeta}>
-                    {listHydrating ? <Text style={styles.listHydratingText}>Enriquecendo cards...</Text> : null}
-                    {showPullHint ? <Text style={styles.pullHintText}>Arraste para atualizar</Text> : null}
-                  </View>
-                ) : null}
-              </View>
-
-              {listLoading && !hasLoadedList ? (
-                <View style={styles.loadingRow}>
-                  <ActivityIndicator size="small" color="#0F766E" />
-                  <Text style={styles.loadingText}>Carregando pacientes...</Text>
-                </View>
-              ) : filteredPatients.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateTitle}>Nenhum paciente encontrado</Text>
-                  <Text style={styles.emptyStateText}>
-                    Revise o termo de pesquisa no topo ou atualize a lista.
+          <Animated.View
+            key="patients-step-list"
+            style={[
+              styles.screenWrap,
+              styles.listScreenWrap,
+              {
+                opacity: transition,
+                transform: [
+                  {
+                    translateY: transition.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [10, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            {/* 🚀 PERFORMANCE: FlashList como scroll primário evita nested ScrollView e habilita virtualização real. */}
+            <FlashList
+              data={isInitialListLoading || !hasListResults ? [] : patientCardItems}
+              renderItem={renderPatientCardItem}
+              keyExtractor={patientCardKeyExtractor}
+              ItemSeparatorComponent={renderPatientCardSeparator}
+              showsVerticalScrollIndicator={false}
+              onEndReachedThreshold={0.35}
+              onEndReached={() => {
+                void loadMorePatients();
+              }}
+              refreshControl={
+                <RefreshControl
+                  refreshing={pullRefreshing}
+                  onRefresh={() => void handlePullToRefresh()}
+                  tintColor="#0F766E"
+                  colors={["#0F766E"]}
+                />
+              }
+              ListHeaderComponent={
+                <View style={styles.listSummaryRow}>
+                  <Text style={styles.listSummaryText}>
+                    {filteredPatients.length} paciente{filteredPatients.length === 1 ? "" : "s"} na listagem.
                   </Text>
+                  {listHydrating || showPullHint ? (
+                    <View style={styles.listSummaryMeta}>
+                      {listHydrating ? <Text style={styles.listHydratingText}>Enriquecendo cards...</Text> : null}
+                      {showPullHint ? <Text style={styles.pullHintText}>Arraste para atualizar</Text> : null}
+                    </View>
+                  ) : null}
                 </View>
-              ) : (
-                <View style={styles.cardsList}>
-                  {/* 🚀 PERFORMANCE: FlashList reduz custo de renderização incremental em listas longas. */}
-                  <FlashList
-                    data={patientCardItems}
-                    renderItem={renderPatientCardItem}
-                    keyExtractor={patientCardKeyExtractor}
-                    ItemSeparatorComponent={renderPatientCardSeparator}
-                    scrollEnabled={false}
-                    showsVerticalScrollIndicator={false}
-                    contentContainerStyle={styles.cardsListContent}
-                  />
+              }
+              ListEmptyComponent={
+                isInitialListLoading ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator size="small" color="#0F766E" />
+                    <Text style={styles.loadingText}>Carregando pacientes...</Text>
+                  </View>
+                ) : (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyStateTitle}>Nenhum paciente encontrado</Text>
+                    <Text style={styles.emptyStateText}>
+                      Revise o termo de pesquisa no topo ou atualize a lista.
+                    </Text>
+                  </View>
+                )
+              }
+              ListFooterComponent={
+                <View style={styles.listFooterWrap}>
+                  {listLoadingMore ? (
+                    <View style={styles.loadingMoreRow}>
+                      <ActivityIndicator size="small" color="#0F766E" />
+                      <Text style={styles.loadingMoreText}>Carregando mais pacientes...</Text>
+                    </View>
+                  ) : hasLoadedList && !hasMorePatients && hasListResults ? (
+                    <Text style={styles.listEndText}>Todos os pacientes carregados.</Text>
+                  ) : null}
                 </View>
-              )}
-            </>
-          ) : (
-            <>
-              <View style={styles.detailActionsRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={backToList}
-                  style={styles.detailActionButton}
-                  testID="patients-back-to-list"
-                >
-                  <Ionicons name="arrow-back" size={15} color="#334155" />
-                  <Text style={styles.detailActionText}>Voltar para pacientes</Text>
-                </Pressable>
-              </View>
-
+              }
+              contentContainerStyle={styles.cardsListVirtualizedContent}
+            />
+          </Animated.View>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {info ? <Text style={styles.infoText}>{info}</Text> : null}
+        </Animated.View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={[styles.container, styles.containerDetail]}
+          refreshControl={
+            <RefreshControl
+              refreshing={pullRefreshing}
+              onRefresh={() => void handlePullToRefresh()}
+              tintColor="#0F766E"
+              colors={["#0F766E"]}
+            />
+          }
+        >
+          <Animated.View
+            style={[
+              styles.screenFocusWrap,
+              {
+                opacity: tabEntryMotion,
+                transform: [
+                  {
+                    translateY: tabEntryMotion.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [8, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <Animated.View
+              key="patients-step-detail"
+              style={[
+                styles.screenWrap,
+                {
+                  opacity: transition,
+                  transform: [
+                    {
+                      translateY: transition.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [10, 0],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
               {detailLoading && detailPatient === null ? (
                 <View style={styles.loadingRowLarge}>
                   <ActivityIndicator size="small" color="#0F766E" />
@@ -1498,224 +2109,175 @@ export function PsychologistPatientsScreen({
                   </Text>
                 </View>
               ) : (
-                <>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.detailTabsRow}
-                  >
-                    {DETAIL_TABS.map((tab) => (
-                      <Pressable
-                        key={tab.key}
-                        accessibilityRole="button"
-                        onPress={() => setDetailTab(tab.key)}
-                        style={[styles.detailTabButton, detailTab === tab.key ? styles.detailTabButtonActive : null]}
-                      >
-                        <Text
+                <View style={styles.detailContentStack}>
+                  <PatientDetailHeroBanner
+                    fullName={detailPatient.fullName}
+                    initials={detailInitials}
+                    ageLabel={resolveAgeLabel(detailPatient).replace("Idade: ", "")}
+                    birthdayLabel={resolveBirthdayCountdownLabel(detailPatient).replace("Proximo aniversario ", "")}
+                    phoneLabel={detailPhoneActionLabel}
+                    onBack={backToList}
+                    backButtonTestID="patients-back-to-list"
+                    onPressAvatar={() => setAvatarModalVisible(true)}
+                    avatarButtonTestID="patients-open-avatar"
+                    onPressWhatsApp={() => selectedPatientId && void handleOpenWhatsapp(selectedPatientId)}
+                    onPressPhone={() => selectedPatientId && void handleOpenCall(selectedPatientId)}
+                    onPressEmergency={() => void handleOpenEmergencyCall()}
+                    whatsappDisabled={detailWhatsAppDisabled}
+                    phoneDisabled={detailPhoneDisabled}
+                    emergencyDisabled={detailEmergencyDisabled}
+                  />
+
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionHeading}>Visao geral</Text>
+                    <View style={styles.overviewDeckStack}>
+                      {/* 🚀 PERFORMANCE: carrosséis paginados (padrão do painel) evitam animação de carta e mantêm 60fps. */}
+                      <View style={styles.overviewDeckColumn}>
+                        <PatientOverviewKpiCarousel
+                          primaryDefinition={completedSessionsOverviewDefinition}
+                          secondaryDefinition={upcomingSessionsOverviewDefinition}
+                          primaryPreferences={OVERVIEW_DECK_PREFERENCES.completed_sessions}
+                          secondaryPreferences={OVERVIEW_DECK_PREFERENCES.upcoming_sessions}
+                          loading={detailLoading}
+                          comparisonError={null}
+                          deckHeight={overviewDeckHeight}
+                        />
+                      </View>
+                      <View style={styles.overviewDeckColumn}>
+                        <PatientOverviewKpiCarousel
+                          primaryDefinition={assignedActivitiesOverviewDefinition}
+                          secondaryDefinition={patientJourneyOverviewDefinition}
+                          primaryPreferences={OVERVIEW_DECK_PREFERENCES.assigned_activities}
+                          secondaryPreferences={OVERVIEW_DECK_PREFERENCES.patient_journey_days}
+                          loading={detailLoading}
+                          comparisonError={null}
+                          deckHeight={overviewDeckHeight}
+                        />
+                      </View>
+                    </View>
+                  </View>
+
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionHeading}>Timeline integrada do paciente</Text>
+
+                    <PatientTimelineFeed
+                      items={pagedTimeline}
+                      emptyMessage="Sem eventos para os filtros selecionados."
+                      headerAction={(
+                        <PatientTimelineFilterChips
+                          chips={timelineFilterChips}
+                          onToggle={(key) => handleToggleTimelineCategory(key as TimelineCategoryFilter)}
+                          onCheckAll={handleCheckAllTimelineCategories}
+                        />
+                      )}
+                    />
+
+                    {visibleTimeline.length > TIMELINE_PAGE_SIZE ? (
+                      <View style={styles.timelinePaginationRow}>
+                        <Pressable
+                          accessibilityRole="button"
+                          onPress={() => setTimelinePage((current) => Math.max(1, current - 1))}
                           style={[
-                            styles.detailTabButtonText,
-                            detailTab === tab.key ? styles.detailTabButtonTextActive : null,
+                            styles.timelinePaginationButton,
+                            normalizedTimelinePage <= 1 ? styles.timelinePaginationButtonDisabled : null,
                           ]}
+                          disabled={normalizedTimelinePage <= 1}
                         >
-                          {tab.label}
+                          <Text style={styles.timelinePaginationButtonText}>Anterior</Text>
+                        </Pressable>
+                        <Text style={styles.timelinePaginationLabel}>
+                          Pagina {normalizedTimelinePage} de {timelineTotalPages}
                         </Text>
-                      </Pressable>
-                    ))}
-                  </ScrollView>
-
-                  {detailTab === "overview" ? (
-                    <View style={styles.detailSection}>
-                      <View style={styles.patientHeroCard}>
                         <Pressable
                           accessibilityRole="button"
-                          onPress={() => setAvatarModalVisible(true)}
-                          style={styles.heroAvatar}
-                          testID="patients-open-avatar"
+                          onPress={() =>
+                            setTimelinePage((current) => Math.min(timelineTotalPages, current + 1))
+                          }
+                          style={[
+                            styles.timelinePaginationButton,
+                            normalizedTimelinePage >= timelineTotalPages
+                              ? styles.timelinePaginationButtonDisabled
+                              : null,
+                          ]}
+                          disabled={normalizedTimelinePage >= timelineTotalPages}
                         >
-                          <Text style={styles.heroAvatarText}>
-                            {detailPatient.fullName
-                              .split(/\s+/)
-                              .slice(0, 2)
-                              .map((token) => token[0]?.toUpperCase() ?? "")
-                              .join("") || "P"}
-                          </Text>
+                          <Text style={styles.timelinePaginationButtonText}>Proxima</Text>
                         </Pressable>
-                        <View style={styles.heroBody}>
-                          <Text style={styles.heroTitle}>{detailPatient.fullName}</Text>
-                          <Text style={styles.heroSubtitle}>{resolveAgeLabel(detailPatient)}</Text>
-                          <Text style={styles.heroSubtitle}>{resolveBirthdayCountdownLabel(detailPatient)}</Text>
-                          <Text style={styles.heroSubtitle}>
-                            Data de aniversario: {formatDatePtBr(detailPatient.birthDate)}
-                          </Text>
-                        </View>
                       </View>
+                    ) : null}
+                  </View>
 
-                      <View style={styles.statsGrid}>
-                        <StatCard label="Tempo de paciente" value={formatPatientTenure(detailPatient.createdAt)} />
-                        <StatCard label="Sessoes realizadas" value={String(completedSessionsCount)} />
-                        <StatCard label="Sessoes futuras" value={String(upcomingSessionsCount)} />
-                        <StatCard label="Atividades atribuidas" value={String(selectedActivities.length)} />
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionHeading}>Detalhes do contato</Text>
+                    <View style={styles.contactInfoList}>
+                      <View style={styles.contactInfoRow}>
+                        <Ionicons name="call-outline" size={16} color="#1D4ED8" />
+                        <Text style={styles.contactInfoText}>
+                          {`Telefone principal: ${detailPatient.phone ?? "Nao informado"}`}
+                        </Text>
                       </View>
+                      <View style={styles.contactInfoRow}>
+                        <Ionicons name="person-outline" size={16} color="#475467" />
+                        <Text style={styles.contactInfoText}>
+                          {`Contato de emergencia: ${detailPatient.emergencyContactName ?? "Nao informado"}`}
+                        </Text>
+                      </View>
+                      <View style={styles.contactInfoRow}>
+                        <Ionicons name="alert-circle-outline" size={16} color="#DC2626" />
+                        <Text style={styles.contactInfoText}>
+                          {`Telefone de emergencia: ${detailPatient.emergencyContactPhone ?? "Nao informado"}`}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
 
-                      <View style={styles.inlineActionsRow}>
+                  <View style={styles.detailSection}>
+                    <Text style={styles.sectionHeading}>Atividades + Formularios</Text>
+                    <PatientWorkspaceFeed items={pagedWorkspaceFeedItems} />
+
+                    {workspaceFeedItems.length > WORKSPACE_PAGE_SIZE ? (
+                      <View style={styles.timelinePaginationRow}>
                         <Pressable
                           accessibilityRole="button"
-                          onPress={() => selectedPatientId && void handleOpenWhatsapp(selectedPatientId)}
-                          style={styles.inlineActionButton}
+                          onPress={() => setWorkspacePage((current) => Math.max(1, current - 1))}
+                          style={[
+                            styles.timelinePaginationButton,
+                            normalizedWorkspacePage <= 1 ? styles.timelinePaginationButtonDisabled : null,
+                          ]}
+                          disabled={normalizedWorkspacePage <= 1}
                         >
-                          <Ionicons name="logo-whatsapp" size={14} color="#166534" />
-                          <Text style={styles.inlineActionText}>WhatsApp</Text>
+                          <Text style={styles.timelinePaginationButtonText}>Anterior</Text>
                         </Pressable>
+                        <Text style={styles.timelinePaginationLabel}>
+                          Pagina {normalizedWorkspacePage} de {workspaceTotalPages}
+                        </Text>
                         <Pressable
                           accessibilityRole="button"
-                          onPress={() => selectedPatientId && void handleOpenCall(selectedPatientId)}
-                          style={styles.inlineActionButton}
+                          onPress={() =>
+                            setWorkspacePage((current) => Math.min(workspaceTotalPages, current + 1))
+                          }
+                          style={[
+                            styles.timelinePaginationButton,
+                            normalizedWorkspacePage >= workspaceTotalPages
+                              ? styles.timelinePaginationButtonDisabled
+                              : null,
+                          ]}
+                          disabled={normalizedWorkspacePage >= workspaceTotalPages}
                         >
-                          <Ionicons name="call-outline" size={14} color="#0F766E" />
-                          <Text style={styles.inlineActionText}>Ligar</Text>
+                          <Text style={styles.timelinePaginationButtonText}>Proxima</Text>
                         </Pressable>
                       </View>
-
-                      <View style={styles.textBlock}>
-                        <Text style={styles.blockTitle}>Descricao completa</Text>
-                        <Text style={styles.blockText}>{detailDescription}</Text>
-                      </View>
-
-                      <View style={styles.textBlock}>
-                        <Text style={styles.blockTitle}>Informacoes relevantes</Text>
-                        <Text style={styles.blockText}>
-                          Canal preferido: {detailPatient.preferredContactChannel}
-                        </Text>
-                        <Text style={styles.blockText}>
-                          Periodo preferido: {detailPatient.preferredContactPeriod ?? "nao informado"}
-                        </Text>
-                        <Text style={styles.blockText}>
-                          Contato de emergencia: {detailPatient.emergencyContactName ?? "nao informado"}
-                        </Text>
-                        <Text style={styles.blockText}>
-                          Telefone emergencia: {detailPatient.emergencyContactPhone ?? "nao informado"}
-                        </Text>
-                      </View>
-                    </View>
-                  ) : null}
-
-                  {detailTab === "activities" ? (
-                    <View style={styles.detailSection}>
-                      <Text style={styles.sectionHeading}>
-                        Atividades atribuidas ({selectedActivities.length})
-                      </Text>
-                      {selectedActivities.length === 0 ? (
-                        <Text style={styles.emptyInlineText}>
-                          Nenhuma atividade atribuida para este paciente.
-                        </Text>
-                      ) : (
-                        selectedActivities.map((activity) => (
-                          <View key={activity.id} style={styles.feedCard}>
-                            <Text style={styles.feedTitle}>{activity.title}</Text>
-                            <Text style={styles.feedMeta}>
-                              Status: {activity.status} | Tipo: {activity.activityType}
-                            </Text>
-                            <Text style={styles.feedMeta}>
-                              Atribuida em {formatDateTimePtBr(activity.assignedAt)}
-                            </Text>
-                            <Text style={styles.feedMeta}>Prazo: {formatDateTimePtBr(activity.dueAt)}</Text>
-                          </View>
-                        ))
-                      )}
-                    </View>
-                  ) : null}
-
-                  {detailTab === "forms" ? (
-                    <View style={styles.detailSection}>
-                      <Text style={styles.sectionHeading}>
-                        Formularios vinculados ({selectedForms.length})
-                      </Text>
-                      {selectedForms.length === 0 ? (
-                        <Text style={styles.emptyInlineText}>
-                          Nenhum formulario associado ao paciente no momento.
-                        </Text>
-                      ) : (
-                        selectedForms.map((form) => (
-                          <View key={form.id} style={styles.feedCard}>
-                            <Text style={styles.feedTitle}>{form.title}</Text>
-                            <Text style={styles.feedMeta}>Status: {form.status}</Text>
-                            <Text style={styles.feedMeta}>
-                              Atribuido em{" "}
-                              {form.assignedAt || form.publishedAt
-                                ? formatDateTimePtBr(form.assignedAt ?? form.publishedAt ?? "")
-                                : "nao informado"}
-                            </Text>
-                            <Text style={styles.feedMeta}>
-                              Aberto em {form.scheduledSendAt ? formatDateTimePtBr(form.scheduledSendAt) : "nao agendado"}
-                            </Text>
-                            <Text style={styles.feedMeta}>
-                              Submetido em {form.submittedAt ? formatDateTimePtBr(form.submittedAt) : "ainda nao"}
-                            </Text>
-                          </View>
-                        ))
-                      )}
-                    </View>
-                  ) : null}
-
-                  {detailTab === "timeline" ? (
-                    <View style={styles.detailSection}>
-                      <Text style={styles.sectionHeading}>Timeline integrada do paciente</Text>
-                      <Text style={styles.timelineHint}>
-                        Linha do tempo vertical em tempo real com eventos de sessoes, atividades,
-                        formularios, notificacoes e cadastro.
-                      </Text>
-
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.timelineFilterRow}
-                      >
-                        {TIMELINE_CATEGORY_FILTERS.map((category) => (
-                          <Pressable
-                            key={category}
-                            accessibilityRole="button"
-                            onPress={() => handleToggleTimelineCategory(category)}
-                            style={[
-                              styles.timelineFilterChip,
-                              timelineFilters[category] ? styles.timelineFilterChipActive : null,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.timelineFilterChipText,
-                                timelineFilters[category]
-                                  ? styles.timelineFilterChipTextActive
-                                  : null,
-                              ]}
-                            >
-                              {TIMELINE_CATEGORY_LABEL[category]}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </ScrollView>
-
-                      <PatientTimelineFeed
-                        items={visibleTimeline}
-                        emptyMessage="Sem eventos para os filtros selecionados."
-                      />
-
-                      {selectedNotificationPreferences ? (
-                        <Text style={styles.preferencesMeta}>
-                          Preferencias: max/h {selectedNotificationPreferences.maxNotificationsPerHour} |
-                          origem {selectedNotificationPreferences.source}
-                        </Text>
-                      ) : null}
-                    </View>
-                  ) : null}
-                </>
+                    ) : null}
+                  </View>
+                </View>
               )}
-            </>
-          )}
-        </Animated.View>
+            </Animated.View>
+          </Animated.View>
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        {info ? <Text style={styles.infoText}>{info}</Text> : null}
-      </ScrollView>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {info ? <Text style={styles.infoText}>{info}</Text> : null}
+        </ScrollView>
+      )}
 
       <Modal
         visible={avatarModalVisible}
@@ -1730,13 +2292,7 @@ export function PsychologistPatientsScreen({
           />
           <View style={styles.avatarModalCard}>
             <View style={styles.avatarModalCircle}>
-              <Text style={styles.avatarModalInitials}>
-                {(detailPatient?.fullName ?? "Paciente")
-                  .split(/\s+/)
-                  .slice(0, 2)
-                  .map((token) => token[0]?.toUpperCase() ?? "")
-                  .join("") || "P"}
-              </Text>
+              <Text style={styles.avatarModalInitials}>{detailInitials}</Text>
             </View>
             <Text style={styles.avatarModalName}>{detailPatient?.fullName ?? "Paciente"}</Text>
             <Text style={styles.avatarModalHint}>Visualizacao ampliada de perfil.</Text>
@@ -1754,25 +2310,26 @@ export function PsychologistPatientsScreen({
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.statCard}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={styles.statValue}>{value}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+    backgroundColor: "#F4F7FB",
   },
   container: {
     flexGrow: 1,
     backgroundColor: "#F4F7FB",
-    paddingHorizontal: 14,
-    paddingTop: 14,
     paddingBottom: 160,
+  },
+  containerDetail: {
+    // 🚀 PERFORMANCE: remove espaço vazio no topo do detalhe para evitar sobreposição visual e redraw desnecessário.
+    paddingHorizontal: 14,
+    paddingTop: 0,
+  },
+  screenFocusWrap: {
+    gap: 0,
+  },
+  listScreenWrap: {
+    flex: 1,
   },
   screenWrap: {
     gap: 12,
@@ -1799,35 +2356,12 @@ const styles = StyleSheet.create({
     fontWeight: typographyContract.fontWeight,
     paddingVertical: 0,
   },
-  detailActionsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-start",
-    gap: 8,
-  },
-  detailActionButton: {
-    minHeight: 32,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#D0D5DD",
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 11,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-  },
-  detailActionText: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#334155",
-    fontSize: 11.5,
-    lineHeight: 15,
-    fontWeight: typographyContract.fontWeight,
-  },
   listSummaryRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 4,
+    paddingBottom: 10,
     gap: 8,
   },
   listSummaryMeta: {
@@ -1857,14 +2391,40 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     fontWeight: typographyContract.fontWeight,
   },
-  cardsList: {
-    minHeight: 1,
-  },
-  cardsListContent: {
-    paddingBottom: 1,
+  cardsListVirtualizedContent: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 160,
   },
   cardSeparator: {
     height: 10,
+  },
+  listFooterWrap: {
+    minHeight: 36,
+    justifyContent: "center",
+    paddingTop: 8,
+  },
+  loadingMoreRow: {
+    minHeight: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  loadingMoreText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#0F766E",
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: typographyContract.fontWeight,
+  },
+  listEndText: {
+    textAlign: "center",
+    fontFamily: typographyContract.fontFamily,
+    color: "#667085",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
   },
   loadingRow: {
     borderRadius: 14,
@@ -1918,34 +2478,6 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: typographyContract.fontWeight,
   },
-  detailTabsRow: {
-    gap: 8,
-    paddingBottom: 2,
-  },
-  detailTabButton: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    backgroundColor: "#FFFFFF",
-    minHeight: 34,
-    paddingHorizontal: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  detailTabButtonActive: {
-    borderColor: "#0F766E",
-    backgroundColor: "#ECFDF3",
-  },
-  detailTabButtonText: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#334155",
-    fontSize: 12.5,
-    lineHeight: 17,
-    fontWeight: typographyContract.fontWeight,
-  },
-  detailTabButtonTextActive: {
-    color: "#065F46",
-  },
   detailSection: {
     borderRadius: 18,
     borderWidth: 1,
@@ -1955,126 +2487,39 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 10,
   },
-  patientHeroCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
-    backgroundColor: "#EFF6FF",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+  detailContentStack: {
     gap: 10,
+  },
+  overviewDeckStack: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  overviewDeckColumn: {
+    flex: 1,
+  },
+  contactInfoList: {
+    gap: 8,
+  },
+  contactInfoRow: {
+    minHeight: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E4E7EC",
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 10,
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
   },
-  heroAvatar: {
-    width: 74,
-    height: 74,
-    borderRadius: 999,
-    backgroundColor: "#DBEAFE",
-    borderWidth: 1,
-    borderColor: "#93C5FD",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  heroAvatarText: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#1E3A8A",
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: typographyContract.fontWeight,
-  },
-  heroBody: {
-    flex: 1,
-    gap: 2,
-  },
-  heroTitle: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#0F172A",
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: typographyContract.fontWeight,
-  },
-  heroSubtitle: {
+  contactInfoText: {
     fontFamily: typographyContract.fontFamily,
     color: "#334155",
     fontSize: 12.5,
     lineHeight: 17,
     fontWeight: typographyContract.fontWeight,
-  },
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  statCard: {
-    width: "48%",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E4E7EC",
-    backgroundColor: "#F8FAFC",
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    gap: 4,
-  },
-  statLabel: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#64748B",
-    fontSize: 11.5,
-    lineHeight: 15,
-    fontWeight: typographyContract.fontWeight,
-  },
-  statValue: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#0F172A",
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: typographyContract.fontWeight,
-  },
-  inlineActionsRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  inlineActionButton: {
-    flex: 1,
-    minHeight: 36,
-    borderRadius: 11,
-    borderWidth: 1,
-    borderColor: "#A7F3D0",
-    backgroundColor: "#ECFDF3",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-  },
-  inlineActionText: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#166534",
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: typographyContract.fontWeight,
-  },
-  textBlock: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E4E7EC",
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 11,
-    paddingVertical: 10,
-    gap: 3,
-  },
-  blockTitle: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#0F172A",
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: typographyContract.fontWeight,
-  },
-  blockText: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#475467",
-    fontSize: 12.5,
-    lineHeight: 17,
-    fontWeight: typographyContract.fontWeight,
+    flexShrink: 1,
   },
   sectionHeading: {
     fontFamily: typographyContract.fontFamily,
@@ -2083,75 +2528,40 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontWeight: typographyContract.fontWeight,
   },
-  emptyInlineText: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#667085",
-    fontSize: 12.5,
-    lineHeight: 17,
-    fontWeight: typographyContract.fontWeight,
-  },
-  feedCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E4E7EC",
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 11,
-    paddingVertical: 10,
-    gap: 3,
-  },
-  feedTitle: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#0F172A",
-    fontSize: 13.5,
-    lineHeight: 18,
-    fontWeight: typographyContract.fontWeight,
-  },
-  feedMeta: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#475467",
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: typographyContract.fontWeight,
-  },
-  timelineHint: {
-    fontFamily: typographyContract.fontFamily,
-    color: "#667085",
-    fontSize: 12,
-    lineHeight: 16,
-    fontWeight: typographyContract.fontWeight,
-  },
-  timelineFilterRow: {
+  timelinePaginationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     gap: 8,
   },
-  timelineFilterChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#CBD5E1",
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 10,
+  timelinePaginationButton: {
     minHeight: 30,
+    minWidth: 86,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
     alignItems: "center",
     justifyContent: "center",
+    paddingHorizontal: 10,
   },
-  timelineFilterChipActive: {
-    borderColor: "#0369A1",
-    backgroundColor: "#E0F2FE",
+  timelinePaginationButtonDisabled: {
+    opacity: 0.5,
   },
-  timelineFilterChipText: {
+  timelinePaginationButtonText: {
+    color: "#344054",
+    fontSize: 12,
+    lineHeight: 16,
     fontFamily: typographyContract.fontFamily,
-    color: "#334155",
-    fontSize: 11.5,
-    lineHeight: 15,
     fontWeight: typographyContract.fontWeight,
   },
-  timelineFilterChipTextActive: {
-    color: "#075985",
-  },
-  preferencesMeta: {
+  timelinePaginationLabel: {
+    flex: 1,
+    textAlign: "center",
+    color: "#667085",
+    fontSize: 12,
+    lineHeight: 16,
     fontFamily: typographyContract.fontFamily,
-    color: "#344054",
-    fontSize: 11.5,
-    lineHeight: 15,
     fontWeight: typographyContract.fontWeight,
   },
   errorText: {

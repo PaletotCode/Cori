@@ -17,7 +17,9 @@ from app.models import Patient, Psychologist, Tenant, User
 
 TRUNCATE_SQL = (
     "TRUNCATE TABLE session_reminders, sessions, activities, clinical_forms, "
+    "activity_templates, form_templates, assignment_idempotency_keys, "
     "notification_deliveries, notification_rules, "
+    "dashboard_card_preferences, "
     "patient_profile_changes, "
     "timeline_events, patient_intakes, "
     "practice_profiles, auth_refresh_tokens, psychologists, patients, users, "

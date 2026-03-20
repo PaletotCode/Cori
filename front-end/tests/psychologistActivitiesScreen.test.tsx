@@ -1,8 +1,7 @@
 import React from "react";
 import { act, create, type ReactTestInstance } from "react-test-renderer";
 
-import type { ActivitiesApiClient } from "../src/features/activities/api/activitiesApiClient";
-import type { ActivityCreateResult, ActivityItem } from "../src/features/activities/api/types";
+import type { ActivityTemplatesApiClient } from "../src/features/activities/api/activityTemplatesApiClient";
 import type { PatientsApiClient } from "../src/features/patients/api/patientsApiClient";
 import { PsychologistActivitiesScreen } from "../src/features/activities/screens/PsychologistActivitiesScreen";
 
@@ -21,9 +20,17 @@ jest.mock("../src/features/auth/hooks/useAuthStore", () => ({
   useAuthStore: (selector: (state: typeof mockAuthState) => unknown) => selector(mockAuthState),
 }));
 
-jest.mock("expo-router", () => ({
-  Link: ({ children, ...props }: Record<string, unknown>) =>
-    React.createElement("Link", props, children as React.ReactNode),
+jest.mock("../src/features/notifications/hooks/useNotificationsStore", () => ({
+  useNotificationsStore: (selector: (_state: { items: unknown[] }) => unknown) =>
+    selector({ items: [] }),
+}));
+
+jest.mock("@react-native-async-storage/async-storage", () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn(async () => null),
+    setItem: jest.fn(async () => undefined),
+  },
 }));
 
 jest.mock("react-native", () => {
@@ -48,59 +55,58 @@ function findByTestId(root: ReactTestInstance, testID: string): ReactTestInstanc
   return root.findByProps({ testID });
 }
 
-describe("psychologist activities screen", () => {
-  it("loads central and creates new activity", async () => {
-    const baseItem: ActivityItem = {
-      id: "activity-1",
-      patientId: "patient-1",
-      patientName: "Paciente Atividade",
-      psychologistId: "psy-1",
-      activityType: "simple_task",
-      status: "assigned",
-      title: "Diario de humor",
-      dueAt: "2026-03-20T14:00:00Z",
-      assignedAt: "2026-03-18T10:00:00Z",
-      overdueAt: null,
-      recurrenceRule: "none",
-      recurrenceInterval: 1,
-      recurrenceEndAt: null,
-      executionElapsedSeconds: 0,
-    };
-
-    const createResult: ActivityCreateResult = {
-      ...baseItem,
-      tenantId: "tenant-1",
-      description: null,
-      instructions: null,
-      documentUrl: null,
-      configuration: {},
-      openedAt: null,
-      startedAt: null,
-      pausedAt: null,
-      completedAt: null,
-      canceledAt: null,
-      feedbackNote: null,
-      createdAt: "2026-03-18T10:00:00Z",
-      updatedAt: "2026-03-18T10:00:00Z",
-      patientAccessToken: "token-123",
-      patientAccessLink: "http://localhost:8081/paciente/atividades?token=token-123",
-    };
-
-    const activitiesClient: ActivitiesApiClient = {
-      createActivity: jest.fn(async () => createResult),
-      listActivities: jest.fn(async () => [baseItem]),
-      getActivity: jest.fn(async () => ({
-        ...createResult,
-        id: "activity-1",
+describe("psychologist activities workspace", () => {
+  it("creates template and assigns through guided flow", async () => {
+    const templatesClient: ActivityTemplatesApiClient = {
+      listTemplates: jest.fn(async () => []),
+      createTemplate: jest.fn(async () => ({
+        id: "template-1",
+        tenantId: "tenant-1",
+        psychologistId: "psy-1",
+        title: "Exercicio de respiracao",
+        description: null,
+        instructions: null,
+        documentUrl: null,
+        configuration: {},
+        activityType: "simple_task" as const,
+        createdAt: "2026-03-19T10:00:00Z",
+        updatedAt: "2026-03-19T10:00:00Z",
+        archivedAt: null,
       })),
-      updateActivity: jest.fn(async () => createResult),
-      applyPsychologistAction: jest.fn(async () => createResult),
-      listTimelineEvents: jest.fn(async () => []),
-      listPublicActivities: jest.fn(),
-      applyPublicAction: jest.fn(),
-      runOverdueScheduler: jest.fn(async () => ({
-        processed: 0,
-        markedOverdue: 0,
+      updateTemplate: jest.fn(),
+      assignTemplate: jest.fn(async () => ({
+        idempotencyReplayed: false,
+        activity: {
+          id: "activity-1",
+          patientId: "patient-1",
+          patientName: "Paciente Atividade",
+          psychologistId: "psy-1",
+          sourceTemplateId: "template-1",
+          activityType: "simple_task" as const,
+          status: "assigned" as const,
+          title: "Exercicio de respiracao",
+          dueAt: "2026-03-20T21:00:00.000Z",
+          scheduledSendAt: null,
+          assignedAt: "2026-03-19T10:10:00Z",
+          overdueAt: null,
+          recurrenceRule: "none" as const,
+          recurrenceInterval: 1,
+          recurrenceEndAt: null,
+          executionElapsedSeconds: 0,
+          tenantId: "tenant-1",
+          description: null,
+          instructions: null,
+          documentUrl: null,
+          configuration: {},
+          openedAt: null,
+          startedAt: null,
+          pausedAt: null,
+          completedAt: null,
+          canceledAt: null,
+          feedbackNote: null,
+          createdAt: "2026-03-19T10:10:00Z",
+          updatedAt: "2026-03-19T10:10:00Z",
+        },
       })),
     };
 
@@ -115,7 +121,7 @@ describe("psychologist activities screen", () => {
           preferredContactChannel: "whatsapp" as const,
           profileSource: "manual" as const,
           whatsappNumberValid: true,
-          updatedAt: "2026-03-18T10:00:00Z",
+          updatedAt: "2026-03-19T09:00:00Z",
         },
       ]),
       create: jest.fn(),
@@ -130,33 +136,53 @@ describe("psychologist activities screen", () => {
     await act(async () => {
       tree = create(
         React.createElement(PsychologistActivitiesScreen, {
-          apiClient: activitiesClient,
+          templatesClient,
           patientsClient,
         }),
       );
     });
+
     await act(async () => {
+      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
 
     const root = tree!.root;
-    expect(findByTestId(root, "activity-item-activity-1")).toBeDefined();
 
     await act(async () => {
-      findByTestId(root, "activities-form-patient-patient-1").props.onPress();
+      findByTestId(root, "activities-create-card").props.onPress();
+    });
+
+    await act(async () => {
+      findByTestId(root, "activities-step-next").props.onPress();
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
       findByTestId(root, "activities-form-title").props.onChangeText("Exercicio de respiracao");
     });
+
+    for (let index = 0; index < 8; index += 1) {
+      await act(async () => {
+        findByTestId(root, "activities-step-next").props.onPress();
+        await Promise.resolve();
+      });
+    }
 
     await act(async () => {
       findByTestId(root, "activities-create-submit").props.onPress();
     });
 
-    expect(activitiesClient.createActivity).toHaveBeenCalledWith(
+    expect(templatesClient.createTemplate).toHaveBeenCalledWith(
       "access-token",
       expect.objectContaining({
         title: "Exercicio de respiracao",
       }),
     );
+    expect(templatesClient.assignTemplate).toHaveBeenCalled();
   });
 });

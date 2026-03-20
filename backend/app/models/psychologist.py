@@ -28,5 +28,7 @@ class Psychologist(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tenant = relationship("Tenant", back_populates="psychologists")
     user = relationship("User", back_populates="psychologist")
     sessions = relationship("Session", back_populates="psychologist")
+    activity_templates = relationship("ActivityTemplate", back_populates="psychologist")
     activities = relationship("Activity", back_populates="psychologist")
+    form_templates = relationship("FormTemplate", back_populates="psychologist")
     clinical_forms = relationship("ClinicalForm", back_populates="psychologist")

@@ -2,6 +2,7 @@ from app.schemas.activity import (
     ActivityCreateRequest,
     ActivityCreateResponse,
     ActivityDetailResponse,
+    ActivityDispatchRunResponse,
     ActivityListItemResponse,
     ActivityOverdueRunResponse,
     ActivityPatientActionRequest,
@@ -42,7 +43,28 @@ from app.schemas.notification import (
     PsychologistDocumentEventRequest,
     UnifiedTimelineEventResponse,
 )
+from app.schemas.panel import (
+    PanelCardPreferencesPatchRequest,
+    PanelCardPreferencesPutRequest,
+    PanelCardPreferencesResponse,
+    PanelKpiCardResponse,
+    PanelKpiComparisonResponse,
+    PanelKpisResponse,
+    PanelPreferencesResponse,
+)
 from app.schemas.practice_profile import PracticeProfileResponse, PracticeProfileUpsertRequest
+from app.schemas.template import (
+    ActivityTemplateAssignRequest,
+    ActivityTemplateAssignResponse,
+    ActivityTemplateCreateRequest,
+    ActivityTemplateResponse,
+    ActivityTemplateUpdateRequest,
+    FormTemplateAssignRequest,
+    FormTemplateAssignResponse,
+    FormTemplateCreateRequest,
+    FormTemplateResponse,
+    FormTemplateUpdateRequest,
+)
 from app.schemas.triage import (
     IntakeDetailResponse,
     IntakeInviteCreateRequest,
@@ -59,6 +81,7 @@ from app.schemas.triage import (
 __all__ = [
     "ActivityCreateRequest",
     "ActivityCreateResponse",
+    "ActivityDispatchRunResponse",
     "ActivityDetailResponse",
     "ActivityListItemResponse",
     "ActivityOverdueRunResponse",
@@ -95,6 +118,13 @@ __all__ = [
     "NotificationInboxActionRequest",
     "NotificationRuleResponse",
     "NotificationRuleUpsertRequest",
+    "PanelCardPreferencesPatchRequest",
+    "PanelCardPreferencesPutRequest",
+    "PanelCardPreferencesResponse",
+    "PanelKpiCardResponse",
+    "PanelKpiComparisonResponse",
+    "PanelKpisResponse",
+    "PanelPreferencesResponse",
     "PatientDocumentEventRequest",
     "PatientInboxResponse",
     "ProfileResponse",
@@ -105,4 +135,14 @@ __all__ = [
     "TimelineEventResponse",
     "TokenPairResponse",
     "UnifiedTimelineEventResponse",
+    "ActivityTemplateAssignRequest",
+    "ActivityTemplateAssignResponse",
+    "ActivityTemplateCreateRequest",
+    "ActivityTemplateResponse",
+    "ActivityTemplateUpdateRequest",
+    "FormTemplateAssignRequest",
+    "FormTemplateAssignResponse",
+    "FormTemplateCreateRequest",
+    "FormTemplateResponse",
+    "FormTemplateUpdateRequest",
 ]

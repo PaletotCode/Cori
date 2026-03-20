@@ -17,8 +17,15 @@ class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     patient_profile_changes = relationship("PatientProfileChange", back_populates="tenant")
     sessions = relationship("Session", back_populates="tenant")
     session_reminders = relationship("SessionReminder", back_populates="tenant")
+    activity_templates = relationship("ActivityTemplate", back_populates="tenant")
     activities = relationship("Activity", back_populates="tenant")
+    form_templates = relationship("FormTemplate", back_populates="tenant")
     clinical_forms = relationship("ClinicalForm", back_populates="tenant")
+    assignment_idempotency_keys = relationship(
+        "AssignmentIdempotencyKey",
+        back_populates="tenant",
+    )
+    dashboard_card_preferences = relationship("DashboardCardPreference", back_populates="tenant")
     notification_rules = relationship("NotificationRule", back_populates="tenant")
     notification_deliveries = relationship("NotificationDelivery", back_populates="tenant")
     timeline_events = relationship("TimelineEvent", back_populates="tenant")

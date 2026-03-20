@@ -38,7 +38,6 @@ def test_patient_crud_overwrite_history_and_whatsapp_filters(client, seed_tenant
             "phone": "+55 (65) 99999-1234",
             "birth_date": "1992-08-04",
             "preferred_contact_channel": "whatsapp",
-            "preferred_contact_period": "night",
             "communication_notes": "Prefere mensagens curtas",
         },
     )
@@ -106,7 +105,6 @@ def test_patient_crud_overwrite_history_and_whatsapp_filters(client, seed_tenant
             "birth_date": "1992-08-04",
             "pronouns": "ela/dela",
             "preferred_contact_channel": "email",
-            "preferred_contact_period": "morning",
             "communication_notes": "Atualizado apos validacao documental.",
             "overwrite_initial_registration": True,
             "overwrite_reason": "Cadastro inicial tinha dados desatualizados.",

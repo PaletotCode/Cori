@@ -72,6 +72,10 @@ class NotificationDeliveryResponse(BaseModel):
     body: str
     status: NotificationDeliveryStatus
     status_reason: str | None
+    category_label: str
+    natural_title: str
+    natural_event_label: str
+    natural_detail: str
     channel_inbox: bool
     channel_push: bool
     channel_realtime: bool
@@ -102,13 +106,18 @@ class UnifiedTimelineEventResponse(BaseModel):
     id: str
     category: NotificationCategory
     event_type: str
+    category_label: str
     actor_type: str
+    actor_label: str
     actor_id: str | None
     session_id: str | None
     activity_id: str | None
     form_id: str | None
     notification_delivery_id: str | None
     payload: dict[str, object]
+    natural_title: str
+    natural_event_label: str
+    natural_detail: str
     created_at: datetime
 
 
@@ -125,4 +134,3 @@ class PatientDocumentEventRequest(BaseModel):
 
     action: PatientDocumentAction
     note: str | None = Field(default=None, max_length=500)
-

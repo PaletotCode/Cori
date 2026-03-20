@@ -1,4 +1,5 @@
-import { StyleSheet } from "react-native";
+import { StyleSheet, type ViewStyle } from "react-native";
+
 import { typographyContract } from "./typography";
 
 export const appColors = {
@@ -10,6 +11,41 @@ export const appColors = {
   primary: "#0F766E",
   danger: "#B42318",
 } as const;
+
+export const bottomTabContract = {
+  // Regra 1: contrato explícito de quantidade recomendada de abas.
+  recommendedTabsMin: 3,
+  recommendedTabsMax: 5,
+  absoluteTabsMax: 6,
+  // Regra 2: tamanhos ergonômicos para toque e leitura mobile.
+  minTouchTarget: 44,
+  iconSize: 24,
+  labelFontSize: 11,
+} as const;
+
+const BASE_TAB_BAR_HEIGHT = 60;
+const MIN_SAFE_AREA_PADDING = 8;
+
+export function createBottomTabBarStyle(safeAreaBottom: number): ViewStyle {
+  // Regra 3: respeita a safe area do home indicator com padding dinâmico.
+  const safeBottomPadding = Math.max(safeAreaBottom, MIN_SAFE_AREA_PADDING);
+
+  return {
+    height: BASE_TAB_BAR_HEIGHT + safeBottomPadding,
+    paddingTop: 6,
+    paddingBottom: safeBottomPadding,
+    paddingHorizontal: 8,
+    backgroundColor: appColors.surface,
+    // Regra 8: separação clara do conteúdo com borda/sombra superior suave.
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: "rgba(15, 23, 42, 0.14)",
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.06,
+    shadowOffset: { width: 0, height: -2 },
+    shadowRadius: 10,
+    elevation: 8,
+  };
+}
 
 export const navigationTheme = StyleSheet.create({
   sceneContainer: {
@@ -25,40 +61,18 @@ export const navigationTheme = StyleSheet.create({
     fontWeight: typographyContract.fontWeight,
     fontFamily: typographyContract.fontFamily,
   },
-  tabBar: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    bottom: 20,
-    borderRadius: 32,
-    backgroundColor: "rgba(255, 255, 255, 0.78)",
-    borderTopColor: "rgba(255, 255, 255, 0.92)",
-    borderTopWidth: 1,
-    height: 86,
-    paddingHorizontal: 14,
-    paddingTop: 9,
-    paddingBottom: 12,
-    shadowColor: "#0F172A",
-    shadowOpacity: 0.14,
-    shadowOffset: { width: 0, height: 14 },
-    shadowRadius: 24,
-    elevation: 14,
-  },
   tabBarLabel: {
-    fontSize: 10,
+    fontSize: bottomTabContract.labelFontSize,
     fontWeight: typographyContract.fontWeight,
     fontFamily: typographyContract.fontFamily,
-    textShadowColor: "rgba(15, 23, 42, 0.26)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
   },
   tabBarItem: {
-    marginHorizontal: 2,
-    marginVertical: 3,
-    paddingBottom: 3,
-    paddingHorizontal: 4,
+    // Regra 2: alvo de toque acima de 44x44 por aba.
+    minHeight: bottomTabContract.minTouchTarget + 8,
+    paddingTop: 4,
+    paddingBottom: 4,
+    paddingHorizontal: 2,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 20,
   },
 });

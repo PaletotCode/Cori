@@ -48,6 +48,12 @@ class Activity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    source_template_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("activity_templates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     activity_type: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(180), nullable=False)
     description: Mapped[str | None] = mapped_column(String(1000), nullable=True)
@@ -55,6 +61,10 @@ class Activity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     document_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     configuration: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="assigned")
+    scheduled_send_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -84,4 +94,5 @@ class Activity(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     patient = relationship("Patient", back_populates="activities")
     psychologist = relationship("Psychologist", back_populates="activities")
     source_activity = relationship("Activity", remote_side="Activity.id")
+    source_template = relationship("ActivityTemplate", back_populates="activities")
     timeline_events = relationship("TimelineEvent", back_populates="activity")

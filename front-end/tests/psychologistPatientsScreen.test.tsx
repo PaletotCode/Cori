@@ -8,7 +8,10 @@ import type {
   PatientListItem,
   PatientTimelineEvent,
 } from "../src/features/patients/api/types";
-import { PsychologistPatientsScreen } from "../src/features/patients/screens/PsychologistPatientsScreen";
+import {
+  __resetPatientsScreenCacheForTests,
+  PsychologistPatientsScreen,
+} from "../src/features/patients/screens/PsychologistPatientsScreen";
 
 const mockOpenURL = jest.fn(async (url: string) => {
   void url;
@@ -30,21 +33,94 @@ jest.mock("../src/features/auth/hooks/useAuthStore", () => ({
   useAuthStore: (selector: (state: typeof mockAuthState) => unknown) => selector(mockAuthState),
 }));
 
+jest.mock("@react-navigation/native", () => {
+  const ReactRuntime = jest.requireActual("react") as typeof import("react");
+  return {
+    useFocusEffect: (callback: () => void | (() => void)) => {
+      ReactRuntime.useEffect(() => callback(), [callback]);
+    },
+  };
+});
+
+jest.mock("expo-router", () => ({
+  useNavigation: () => ({
+    setOptions: () => undefined,
+  }),
+}));
+
+jest.mock("react-native-svg", () => {
+  const ReactRuntime = jest.requireActual("react") as typeof import("react");
+  const Svg = (props: Record<string, unknown>) =>
+    ReactRuntime.createElement("Svg", props, props.children as React.ReactNode);
+  const Path = (props: Record<string, unknown>) =>
+    ReactRuntime.createElement("Path", props, props.children as React.ReactNode);
+  return {
+    __esModule: true,
+    default: Svg,
+    Svg,
+    Path,
+  };
+});
+
 jest.mock("react-native", () => {
   const makeComponent = (name: string) =>
     function MockComponent(props: Record<string, unknown>) {
       return React.createElement(name, props, props.children as React.ReactNode);
     };
 
+  class AnimatedValue {
+    value: number;
+
+    constructor(value: number) {
+      this.value = value;
+    }
+
+    setValue(next: number) {
+      this.value = next;
+    }
+
+    interpolate(config: { outputRange?: number[] }) {
+      return config.outputRange?.[0] ?? this.value;
+    }
+  }
+
+  const Animated = {
+    Value: AnimatedValue,
+    timing: () => ({
+      start: (callback?: ({ finished }: { finished: boolean }) => void) => {
+        callback?.({ finished: true });
+      },
+      stop: () => undefined,
+    }),
+    View: makeComponent("AnimatedView"),
+  };
+
   return {
     ActivityIndicator: makeComponent("ActivityIndicator"),
+    Animated,
+    InteractionManager: {
+      runAfterInteractions: (task: () => void) => {
+        task();
+        return {
+          cancel: () => undefined,
+        };
+      },
+    },
+    Modal: makeComponent("Modal"),
     Pressable: makeComponent("Pressable"),
+    RefreshControl: makeComponent("RefreshControl"),
     ScrollView: makeComponent("ScrollView"),
     Text: makeComponent("Text"),
     TextInput: makeComponent("TextInput"),
+    TouchableOpacity: makeComponent("TouchableOpacity"),
     View: makeComponent("View"),
+    useWindowDimensions: () => ({ width: 390, height: 844, scale: 3, fontScale: 1 }),
     Linking: {
       openURL: (...args: [string]) => mockOpenURL(...args),
+    },
+    Easing: {
+      cubic: "cubic",
+      out: (value: unknown) => value,
     },
     StyleSheet: {
       create: (styles: unknown) => styles,
@@ -54,6 +130,32 @@ jest.mock("react-native", () => {
 
 function findByTestId(root: ReactTestInstance, testID: string): ReactTestInstance {
   return root.findByProps({ testID });
+}
+
+async function flushMicrotasks(cycles = 8): Promise<void> {
+  for (let cycle = 0; cycle < cycles; cycle += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+async function waitForTestId(
+  root: ReactTestInstance,
+  testID: string,
+  attempts = 20,
+): Promise<ReactTestInstance> {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return findByTestId(root, testID);
+    } catch (searchError) {
+      if (attempt === attempts - 1) {
+        throw searchError;
+      }
+      await flushMicrotasks(2);
+    }
+  }
+  throw new Error(`Elemento nao encontrado: ${testID}`);
 }
 
 function createApiClient(overrides: Partial<PatientsApiClient> = {}): PatientsApiClient {
@@ -81,7 +183,6 @@ function createApiClient(overrides: Partial<PatientsApiClient> = {}): PatientsAp
     emergencyContactName: null,
     emergencyContactPhone: null,
     preferredContactChannel: "whatsapp",
-    preferredContactPeriod: "night",
     communicationNotes: "Prefere texto",
     profileSource: "manual",
     whatsappNumberValid: true,
@@ -114,7 +215,6 @@ function createApiClient(overrides: Partial<PatientsApiClient> = {}): PatientsAp
     create: jest.fn(async () => ({
       ...baseDetail,
       birthDate: null,
-      preferredContactPeriod: null,
       communicationNotes: null,
     })),
     get: jest.fn(async () => baseDetail),
@@ -129,9 +229,27 @@ function createApiClient(overrides: Partial<PatientsApiClient> = {}): PatientsAp
   };
 }
 
+function createDeferred<TValue>() {
+  let resolve!: (value: TValue | PromiseLike<TValue>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<TValue>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("psychologist patients screen", () => {
   beforeEach(() => {
+    (globalThis as Record<string, unknown>).requestAnimationFrame =
+      ((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      }) as unknown as typeof requestAnimationFrame;
+    (globalThis as Record<string, unknown>).cancelAnimationFrame = (() => undefined) as unknown as
+      typeof cancelAnimationFrame;
     mockOpenURL.mockClear();
+    __resetPatientsScreenCacheForTests();
   });
 
   it("loads patient list and profile details", async () => {
@@ -141,13 +259,10 @@ describe("psychologist patients screen", () => {
     await act(async () => {
       tree = create(React.createElement(PsychologistPatientsScreen, { apiClient }));
     });
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await flushMicrotasks();
 
     const root = tree!.root;
-    const listItem = findByTestId(root, "patients-list-item-patient-1");
+    const listItem = await waitForTestId(root, "patients-open-patient-1");
     expect(listItem).toBeDefined();
     expect(apiClient.list).toHaveBeenCalled();
     expect(apiClient.get).toHaveBeenCalledWith("access-token", "patient-1");
@@ -155,6 +270,19 @@ describe("psychologist patients screen", () => {
 
   it("opens whatsapp fallback when phone is invalid", async () => {
     const apiClient = createApiClient({
+      list: jest.fn(async () => [
+        {
+          id: "patient-1",
+          fullName: "Paciente Aurora",
+          preferredName: "Aurora",
+          email: "aurora@cori.dev",
+          phone: "3211-1000",
+          preferredContactChannel: "whatsapp" as const,
+          profileSource: "manual" as const,
+          whatsappNumberValid: false,
+          updatedAt: "2026-03-17T20:00:00Z",
+        },
+      ]),
       get: jest.fn(async () => ({
         id: "patient-1",
         tenantId: "tenant-1",
@@ -180,18 +308,81 @@ describe("psychologist patients screen", () => {
     await act(async () => {
       tree = create(React.createElement(PsychologistPatientsScreen, { apiClient }));
     });
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await flushMicrotasks();
 
     const root = tree!.root;
+    const whatsappButton = await waitForTestId(root, "patients-whatsapp-patient-1");
     await act(async () => {
-      findByTestId(root, "patients-whatsapp-button").props.onPress();
+      whatsappButton.props.onPress({
+        stopPropagation: () => undefined,
+      });
     });
 
     expect(mockOpenURL).toHaveBeenCalledWith(
-      "https://wa.me/?text=Ola!%20Recebi%20seu%20contato%20e%20quero%20alinhar%20o%20proximo%20passo.",
+      "https://wa.me/?text=Ola!%20Passei%20aqui%20para%20alinhar%20os%20proximos%20passos%20da%20terapia.",
     );
+  });
+
+  it("aborts secondary detail loading when user returns immediately to list", async () => {
+    const deferredDetail = createDeferred<PatientDetail>();
+    const listChanges = jest.fn(async () => [] as PatientChange[]);
+    const listTimelineEvents = jest.fn(async () => [] as PatientTimelineEvent[]);
+    const resolvedDetail: PatientDetail = {
+      id: "patient-1",
+      tenantId: "tenant-1",
+      fullName: "Paciente Aurora",
+      preferredName: "Aurora",
+      email: "aurora@cori.dev",
+      phone: "+5565999990001",
+      birthDate: "1990-01-01",
+      pronouns: null,
+      emergencyContactName: null,
+      emergencyContactPhone: null,
+      preferredContactChannel: "whatsapp",
+      communicationNotes: "Prefere texto",
+      profileSource: "manual",
+      whatsappNumberValid: true,
+      createdAt: "2026-03-17T19:00:00Z",
+      updatedAt: "2026-03-17T20:00:00Z",
+    };
+
+    const getPatient = jest
+      .fn<Promise<PatientDetail>, [string, string]>()
+      .mockResolvedValueOnce(resolvedDetail)
+      .mockImplementation(() => deferredDetail.promise);
+
+    const apiClient = createApiClient({
+      get: getPatient,
+      listChanges,
+      listTimelineEvents,
+    });
+
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(React.createElement(PsychologistPatientsScreen, { apiClient }));
+    });
+    await flushMicrotasks();
+
+    const root = tree!.root;
+    const openButton = await waitForTestId(root, "patients-open-patient-1");
+    await act(async () => {
+      openButton.props.onPress();
+    });
+
+    const backButton = await waitForTestId(root, "patients-back-to-list");
+    await act(async () => {
+      backButton.props.onPress();
+    });
+
+    await act(async () => {
+      deferredDetail.resolve({
+        ...resolvedDetail,
+      });
+      await Promise.resolve();
+    });
+    await flushMicrotasks();
+
+    expect(listChanges).not.toHaveBeenCalled();
+    expect(listTimelineEvents).not.toHaveBeenCalled();
   });
 });

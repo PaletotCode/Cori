@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import { typographyContract } from "../../../../shared/ui/typography";
 
@@ -21,6 +21,8 @@ function AgendaYearViewComponent({
   eventsByDate,
   onOpenMonth,
 }: AgendaYearViewProps) {
+  const { width: viewportWidth } = useWindowDimensions();
+  const monthCardWidth = viewportWidth <= 360 ? "48.2%" : "32%";
   const months = useMemo(
     () => Array.from({ length: 12 }, (_, monthIndex) => new Date(year, monthIndex, 1)),
     [year],
@@ -41,7 +43,7 @@ function AgendaYearViewComponent({
             accessibilityRole="button"
             key={monthDate.toISOString()}
             onPress={() => onOpenMonth(monthDate)}
-            style={styles.monthCard}
+            style={[styles.monthCard, { width: monthCardWidth }]}
           >
             <Text style={[styles.monthTitle, monthHasSelection ? styles.monthTitleActive : null]}>
               {monthLabel(monthDate)}
@@ -65,6 +67,8 @@ function AgendaYearViewComponent({
                           ]}
                         >
                           <Text
+                            numberOfLines={1}
+                            ellipsizeMode="clip"
                             style={[
                               styles.dayText,
                               isToday ? styles.dayTextSelected : null,
@@ -106,7 +110,6 @@ const styles = StyleSheet.create({
     rowGap: 12,
   },
   monthCard: {
-    width: "32%",
     gap: 4,
   },
   monthTitle: {
@@ -136,12 +139,12 @@ const styles = StyleSheet.create({
     minHeight: 3,
   },
   dayPill: {
-    minWidth: 16,
+    minWidth: 19,
     minHeight: 16,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 8,
-    paddingHorizontal: 1,
+    paddingHorizontal: 2,
   },
   dayPillSelected: {
     borderWidth: 1,

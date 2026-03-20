@@ -21,7 +21,6 @@ def make_payload(**overrides: object) -> PatientCreateRequest:
         "emergency_contact_name": "  Responsavel ",
         "emergency_contact_phone": "65 3211-1000",
         "preferred_contact_channel": "whatsapp",
-        "preferred_contact_period": "night",
         "communication_notes": "  prefere mensagem curta. ",
     }
     payload.update(overrides)

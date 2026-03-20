@@ -56,10 +56,14 @@ export interface NotificationDelivery {
   patientId: string;
   eventType: string;
   category: NotificationCategory;
+  categoryLabel?: string;
   title: string;
   body: string;
   status: NotificationStatus;
   statusReason: string | null;
+  naturalTitle?: string;
+  naturalEventLabel?: string;
+  naturalDetail?: string;
   channelInbox: boolean;
   channelPush: boolean;
   channelRealtime: boolean;
@@ -77,14 +81,19 @@ export interface NotificationDelivery {
 export interface UnifiedTimelineEvent {
   id: string;
   category: NotificationCategory;
+  categoryLabel?: string;
   eventType: string;
   actorType: string;
+  actorLabel?: string;
   actorId: string | null;
   sessionId: string | null;
   activityId: string | null;
   formId: string | null;
   notificationDeliveryId: string | null;
   payload: Record<string, unknown>;
+  naturalTitle?: string;
+  naturalEventLabel?: string;
+  naturalDetail?: string;
   createdAt: string;
 }
 
@@ -97,4 +106,3 @@ export interface PatientInboxResult {
 export interface NotificationApiErrorPayload {
   detail?: string;
 }
-

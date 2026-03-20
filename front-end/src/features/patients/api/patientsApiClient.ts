@@ -6,6 +6,7 @@ import type {
   PatientCreatePayload,
   PatientDetail,
   PatientListItem,
+  PatientOverviewKpis,
   PatientTimelineEvent,
   PatientUpdatePayload,
   PatientsApiErrorPayload,
@@ -45,7 +46,6 @@ interface PatientDetailResponseBody {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   preferred_contact_channel: "whatsapp" | "email" | "phone";
-  preferred_contact_period: "morning" | "afternoon" | "night" | "flexible" | null;
   communication_notes: string | null;
   profile_source: "manual" | "intake";
   whatsapp_number_valid: boolean;
@@ -63,7 +63,6 @@ interface PatientCreateRequestBody {
   emergency_contact_name?: string;
   emergency_contact_phone?: string;
   preferred_contact_channel?: "whatsapp" | "email" | "phone";
-  preferred_contact_period?: "morning" | "afternoon" | "night" | "flexible";
   communication_notes?: string;
 }
 
@@ -80,21 +79,57 @@ interface PatientChangeResponseBody {
   new_data: Record<string, unknown> | null;
   changed_by_user_id: string | null;
   reason: string | null;
+  natural_summary?: string;
   created_at: string;
 }
 
 interface PatientTimelineEventResponseBody {
   id: string;
   event_type: string;
+  category_label?: string;
   actor_type: string;
+  actor_label?: string;
   actor_id: string | null;
   payload: Record<string, unknown>;
+  natural_title?: string;
+  natural_event_label?: string;
+  natural_detail?: string;
   created_at: string;
 }
 
 interface PatientArchiveResponseBody {
   patient_id: string;
   archived_at: string;
+}
+
+interface PatientOverviewKpiComparisonResponseBody {
+  item: "yesterday" | "weekAgo" | "monthAgo";
+  baseline_value: number | null;
+  delta_value: number | null;
+  delta_percent: number | null;
+  trend: "up" | "down" | "flat" | "unknown";
+  comparable: boolean;
+  missing_baseline: boolean;
+  window_start_at: string;
+  window_end_at: string;
+  metadata: Record<string, unknown>;
+}
+
+interface PatientOverviewKpiCardResponseBody {
+  key: "completed_sessions" | "upcoming_sessions" | "assigned_activities" | "patient_journey_days";
+  unit: "count";
+  current_value: number | null;
+  window_start_at: string;
+  window_end_at: string;
+  comparisons: PatientOverviewKpiComparisonResponseBody[];
+  metadata: Record<string, unknown>;
+}
+
+interface PatientOverviewKpisResponseBody {
+  timezone: string;
+  generated_at: string;
+  calculation_version: "patient_overview_kpi_v1";
+  cards: PatientOverviewKpiCardResponseBody[];
 }
 
 export interface PatientsApiClient {
@@ -113,6 +148,11 @@ export interface PatientsApiClient {
     patientId: string,
     limit?: number,
   ) => Promise<PatientTimelineEvent[]>;
+  getOverviewKpis?: (
+    accessToken: string,
+    patientId: string,
+    timezone?: string,
+  ) => Promise<PatientOverviewKpis>;
 }
 
 interface CreatePatientsApiClientOptions {
@@ -172,7 +212,6 @@ function mapPatientDetail(payload: PatientDetailResponseBody): PatientDetail {
     emergencyContactName: payload.emergency_contact_name,
     emergencyContactPhone: payload.emergency_contact_phone,
     preferredContactChannel: payload.preferred_contact_channel,
-    preferredContactPeriod: payload.preferred_contact_period,
     communicationNotes: payload.communication_notes,
     profileSource: payload.profile_source,
     whatsappNumberValid: payload.whatsapp_number_valid,
@@ -198,9 +237,6 @@ function mapCreatePayload(payload: PatientCreatePayload): PatientCreateRequestBo
   }
   if (payload.preferredContactChannel !== undefined) {
     body.preferred_contact_channel = payload.preferredContactChannel;
-  }
-  if (payload.preferredContactPeriod !== undefined) {
-    body.preferred_contact_period = payload.preferredContactPeriod;
   }
   if (payload.communicationNotes !== undefined) {
     body.communication_notes = payload.communicationNotes;
@@ -228,6 +264,7 @@ function mapChange(payload: PatientChangeResponseBody): PatientChange {
     newData: payload.new_data,
     changedByUserId: payload.changed_by_user_id,
     reason: payload.reason,
+    naturalSummary: payload.natural_summary,
     createdAt: payload.created_at,
   };
 }
@@ -236,9 +273,14 @@ function mapTimelineEvent(payload: PatientTimelineEventResponseBody): PatientTim
   return {
     id: payload.id,
     eventType: payload.event_type,
+    categoryLabel: payload.category_label,
     actorType: payload.actor_type,
+    actorLabel: payload.actor_label,
     actorId: payload.actor_id,
     payload: payload.payload,
+    naturalTitle: payload.natural_title,
+    naturalEventLabel: payload.natural_event_label,
+    naturalDetail: payload.natural_detail,
     createdAt: payload.created_at,
   };
 }
@@ -247,6 +289,34 @@ function mapArchive(payload: PatientArchiveResponseBody): PatientArchiveResult {
   return {
     patientId: payload.patient_id,
     archivedAt: payload.archived_at,
+  };
+}
+
+function mapOverviewKpis(payload: PatientOverviewKpisResponseBody): PatientOverviewKpis {
+  return {
+    timezone: payload.timezone,
+    generatedAt: payload.generated_at,
+    calculationVersion: payload.calculation_version,
+    cards: payload.cards.map((card) => ({
+      key: card.key,
+      unit: card.unit,
+      currentValue: card.current_value,
+      windowStartAt: card.window_start_at,
+      windowEndAt: card.window_end_at,
+      comparisons: card.comparisons.map((comparison) => ({
+        item: comparison.item,
+        baselineValue: comparison.baseline_value,
+        deltaValue: comparison.delta_value,
+        deltaPercent: comparison.delta_percent,
+        trend: comparison.trend,
+        comparable: comparison.comparable,
+        missingBaseline: comparison.missing_baseline,
+        windowStartAt: comparison.window_start_at,
+        windowEndAt: comparison.window_end_at,
+        metadata: comparison.metadata,
+      })),
+      metadata: card.metadata,
+    })),
   };
 }
 
@@ -266,6 +336,12 @@ function buildListPath(options?: ListPatientsOptions): string {
   }
   if (options?.sortOrder !== undefined) {
     params.set("sort_order", options.sortOrder);
+  }
+  if (options?.limit !== undefined) {
+    params.set("limit", String(options.limit));
+  }
+  if (options?.offset !== undefined) {
+    params.set("offset", String(options.offset));
   }
 
   const query = params.toString();
@@ -387,6 +463,35 @@ export function createPatientsApiClient(
         },
       );
       return response.map(mapTimelineEvent);
+    },
+
+    async getOverviewKpis(
+      accessToken: string,
+      patientId: string,
+      timezone?: string,
+    ): Promise<PatientOverviewKpis> {
+      const params = new URLSearchParams();
+      if (typeof timezone === "string" && timezone.trim().length > 0) {
+        params.set("timezone", timezone.trim());
+      }
+      const query = params.toString();
+      const path =
+        query.length > 0
+          ? `/patients/${patientId}/overview-kpis?${query}`
+          : `/patients/${patientId}/overview-kpis`;
+
+      const response = await requestJson<PatientOverviewKpisResponseBody>(
+        fetchImpl,
+        baseUrl,
+        path,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        },
+      );
+      return mapOverviewKpis(response);
     },
   };
 }
