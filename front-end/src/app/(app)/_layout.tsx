@@ -1,5 +1,13 @@
 import { Redirect, Tabs } from "expo-router";
-import { Image, StyleSheet, View } from "react-native";
+import { useCallback, useState } from "react";
+import {
+  Image,
+  type ImageLoadEventData,
+  type ImageSourcePropType,
+  type NativeSyntheticEvent,
+  StyleSheet,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuthStore } from "../../features/auth/hooks/useAuthStore";
@@ -16,14 +24,47 @@ import {
   navigationTheme,
 } from "../../shared/ui/navigationTheme";
 
-const psychologistWallpaper = require("../../assets/wallpapers/psychologist-wallpaper.png");
+const PSYCHOLOGIST_WALLPAPER_SOURCES: readonly ImageSourcePropType[] = [
+  require("../../assets/wallpapers/psychologist-wallpaper.jpeg"),
+  require("../../assets/wallpapers/psychologist-wallpaper.jpg"),
+  require("../../assets/wallpapers/psychologist-wallpaper.png"),
+];
 
 export default function ProtectedLayout() {
   const insets = useSafeAreaInsets();
+  const [wallpaperIndex, setWallpaperIndex] = useState<number>(0);
   const hydrated = useAuthStore((state) => state.hydrated);
   const status = useAuthStore((state) => state.status);
   const role = useAuthStore((state) => state.role);
   const onboardingCompleted = useAuthStore((state) => state.profile?.onboardingCompleted ?? null);
+  const wallpaperSource =
+    PSYCHOLOGIST_WALLPAPER_SOURCES[
+      Math.min(wallpaperIndex, PSYCHOLOGIST_WALLPAPER_SOURCES.length - 1)
+    ];
+
+  const handleWallpaperError = useCallback(() => {
+    setWallpaperIndex((current) =>
+      current < PSYCHOLOGIST_WALLPAPER_SOURCES.length - 1 ? current + 1 : current,
+    );
+  }, []);
+
+  const handleWallpaperLoad = useCallback(
+    (event: NativeSyntheticEvent<ImageLoadEventData>) => {
+      const { width, height } = event.nativeEvent.source;
+      setWallpaperIndex((current) => {
+        if (current >= PSYCHOLOGIST_WALLPAPER_SOURCES.length - 1) {
+          return current;
+        }
+        // Arquivos placeholder no repositório são 1x1 e servem apenas para manter resolução de módulo.
+        // Se detectar 1x1, avança para o próximo formato disponível (.jpeg/.jpg/.png).
+        if (width <= 1 || height <= 1) {
+          return current + 1;
+        }
+        return current;
+      });
+    },
+    [],
+  );
 
   const redirect = resolveProtectedRouteRedirect({
     hydrated,
@@ -39,8 +80,10 @@ export default function ProtectedLayout() {
   return (
     <View style={styles.layoutRoot}>
       <Image
-        source={psychologistWallpaper}
+        source={wallpaperSource}
         resizeMode="cover"
+        onLoad={handleWallpaperLoad}
+        onError={handleWallpaperError}
         style={styles.wallpaper}
       />
       <View style={styles.wallpaperOverlay} pointerEvents="none" />
