@@ -8,11 +8,13 @@ import { screenMotionContract } from "../../shared/ui/screenMotionContract";
 export default function AuthLayout() {
   const hydrated = useAuthStore((state) => state.hydrated);
   const status = useAuthStore((state) => state.status);
+  const role = useAuthStore((state) => state.role);
   const onboardingCompleted = useAuthStore((state) => state.profile?.onboardingCompleted ?? null);
 
   const redirect = resolveAuthRouteRedirect({
     hydrated,
     status,
+    role,
     onboardingCompleted,
   });
 
@@ -35,15 +37,10 @@ export default function AuthLayout() {
       <Stack.Screen
         name="psicologo/login"
         options={{
-          title: "Login",
-          headerTitle: "Acesso do Psicologo",
-          headerTintColor: appColors.primary,
-        }}
-      />
-      <Stack.Screen
-        name="paciente"
-        options={{
           headerShown: false,
+          title: "Acesso Cori",
+          headerTitle: "Acesso Cori",
+          headerTintColor: appColors.primary,
         }}
       />
     </Stack>

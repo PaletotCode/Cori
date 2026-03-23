@@ -22,6 +22,7 @@ export interface IntakeInviteQuestionPayload {
 export interface IntakeInviteCreatePayload {
   mode: IntakeMode;
   expiresInHours: number;
+  accessCodeAlias?: string;
   inviteMessage?: string;
   customQuestions?: IntakeInviteQuestionPayload[];
 }
@@ -33,33 +34,8 @@ export interface IntakeInviteCreateResult {
   inviteToken: string;
   inviteLink: string;
   inviteExpiresAt: string;
-}
-
-export interface IntakePublicView {
-  intakeId: string;
-  mode: IntakeMode;
-  status: IntakeStatus;
-  inviteExpiresAt: string;
-  practiceName: string | null;
-  inviteMessage: string | null;
-  requiresCustomTriage: boolean;
-  customQuestions: IntakeCustomQuestion[];
-  complementRequestNote: string | null;
-}
-
-export interface IntakePublicSubmitPayload {
-  patientFullName: string;
-  patientEmail?: string;
-  patientPhone?: string;
-  consentTermsAccepted: boolean;
-  consentPrivacyAccepted: boolean;
-  triageAnswers?: Record<string, string>;
-}
-
-export interface IntakePublicSubmitResult {
-  intakeId: string;
-  status: IntakeStatus;
-  submittedAt: string | null;
+  accessCode: string;
+  accessCodeExpiresAt: string;
 }
 
 export interface IntakeQueueItem {
@@ -67,11 +43,19 @@ export interface IntakeQueueItem {
   mode: IntakeMode;
   status: IntakeStatus;
   inviteExpiresAt: string;
+  accessCodeExpiresAt: string | null;
   openedAt: string | null;
   submittedAt: string | null;
   patientFullName: string | null;
+  patientPreferredName: string | null;
   patientEmail: string | null;
   patientPhone: string | null;
+  patientBirthDate: string | null;
+  patientPronouns: string | null;
+  patientEmergencyContactName: string | null;
+  patientEmergencyContactPhone: string | null;
+  patientProfilePhotoUrl: string | null;
+  patientProfileBannerUrl: string | null;
   complementRequestNote: string | null;
   activatedPatientId: string | null;
   hasTriageAnswers: boolean;
@@ -82,18 +66,49 @@ export interface IntakeDetail {
   mode: IntakeMode;
   status: IntakeStatus;
   inviteExpiresAt: string;
+  accessCodeExpiresAt: string | null;
   openedAt: string | null;
   submittedAt: string | null;
   reviewedAt: string | null;
   activatedAt: string | null;
   patientFullName: string | null;
+  patientPreferredName: string | null;
   patientEmail: string | null;
   patientPhone: string | null;
+  patientBirthDate: string | null;
+  patientPronouns: string | null;
+  patientEmergencyContactName: string | null;
+  patientEmergencyContactPhone: string | null;
+  patientCommunicationNotes: string | null;
+  patientProfilePhotoUrl: string | null;
+  patientProfileBannerUrl: string | null;
   customQuestions: IntakeCustomQuestion[];
   triageAnswers: Record<string, string> | null;
   reviewNote: string | null;
   complementRequestNote: string | null;
   activatedPatientId: string | null;
+}
+
+export interface IntakePatientSubmitPayload {
+  patientFullName: string;
+  patientPreferredName?: string;
+  patientEmail?: string;
+  patientPhone?: string;
+  patientBirthDate?: string;
+  patientPronouns?: string;
+  patientEmergencyContactName?: string;
+  patientEmergencyContactPhone?: string;
+  patientCommunicationNotes?: string;
+  patientProfilePhotoUrl?: string;
+  patientProfileBannerUrl?: string;
+  consentTermsAccepted: true;
+  consentPrivacyAccepted: true;
+}
+
+export interface IntakePatientSubmitResult {
+  intakeId: string;
+  status: IntakeStatus;
+  submittedAt: string | null;
 }
 
 export interface IntakeReviewPayload {
@@ -108,6 +123,16 @@ export interface IntakeReviewResult {
   activatedPatientId: string | null;
 }
 
+export interface IntakeRotateCodePayload {
+  alias?: string;
+}
+
+export interface IntakeRotateCodeResult {
+  intakeId: string;
+  accessCode: string;
+  accessCodeExpiresAt: string;
+}
+
 export interface TimelineEvent {
   id: string;
   intakeId: string | null;
@@ -120,5 +145,5 @@ export interface TimelineEvent {
 }
 
 export interface TriageApiErrorPayload {
-  detail?: string;
+  detail?: unknown;
 }

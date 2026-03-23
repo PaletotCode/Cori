@@ -31,6 +31,8 @@ class PatientCreateRequest(BaseModel):
     emergency_contact_phone: str | None = Field(default=None, max_length=40)
     preferred_contact_channel: PatientContactChannel = "whatsapp"
     communication_notes: str | None = Field(default=None, max_length=500)
+    profile_photo_url: str | None = Field(default=None, max_length=2048)
+    profile_banner_url: str | None = Field(default=None, max_length=2048)
 
 
 class PatientUpdateRequest(PatientCreateRequest):
@@ -47,6 +49,8 @@ class PatientListItemResponse(BaseModel):
     preferred_contact_channel: PatientContactChannel
     profile_source: PatientProfileSource
     whatsapp_number_valid: bool
+    profile_photo_url: str | None
+    profile_banner_url: str | None
     updated_at: datetime
 
 
@@ -63,6 +67,8 @@ class PatientDetailResponse(BaseModel):
     emergency_contact_phone: str | None
     preferred_contact_channel: PatientContactChannel
     communication_notes: str | None
+    profile_photo_url: str | None
+    profile_banner_url: str | None
     profile_source: PatientProfileSource
     whatsapp_number_valid: bool
     created_at: datetime

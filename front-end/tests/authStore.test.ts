@@ -29,6 +29,8 @@ function makeProfile(): AuthProfile {
 function createDependencies() {
   const apiClient: jest.Mocked<AuthApiClient> = {
     login: jest.fn(),
+    exchangeGoogleCode: jest.fn(),
+    completeOnboarding: jest.fn(),
     refresh: jest.fn(),
     logout: jest.fn(),
     me: jest.fn(),
@@ -103,6 +105,73 @@ describe("auth store", () => {
     expect(storage.save).toHaveBeenCalledTimes(1);
   });
 
+  it("logs in via google oauth code exchange", async () => {
+    const { apiClient, storage } = createDependencies();
+    const tokens = makeTokens();
+    const profile = makeProfile();
+
+    apiClient.exchangeGoogleCode.mockResolvedValue(tokens);
+    apiClient.me.mockResolvedValue(profile);
+
+    const store = createAuthStore({
+      apiClient,
+      storage,
+    });
+
+    await store.actions.loginWithGoogle({
+      code: "google-auth-code",
+      tenantId: "tenant-1",
+      redirectUri: "http://localhost:8081/psicologo/login",
+      role: "psychologist",
+      stateNonce: "nonce-1",
+      codeVerifier:
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc",
+    });
+
+    expect(apiClient.exchangeGoogleCode).toHaveBeenCalledWith({
+      code: "google-auth-code",
+      tenantId: "tenant-1",
+      redirectUri: "http://localhost:8081/psicologo/login",
+      role: "psychologist",
+      stateNonce: "nonce-1",
+      codeVerifier:
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc",
+    });
+    expect(store.getState().status).toBe("authenticated");
+    expect(store.getState().role).toBe("psychologist");
+    expect(storage.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs in patient via google oauth without me lookup", async () => {
+    const { apiClient, storage } = createDependencies();
+    const tokens = makeTokens();
+
+    apiClient.exchangeGoogleCode.mockResolvedValue(tokens);
+
+    const store = createAuthStore({
+      apiClient,
+      storage,
+    });
+
+    await store.actions.loginWithGoogle({
+      code: "google-auth-code-patient",
+      tenantId: "tenant-patient",
+      redirectUri: "http://localhost:8081/psicologo/login",
+      role: "patient",
+      stateNonce: "nonce-patient-1",
+      codeVerifier:
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~abc",
+      intakeAccessCode: "COR1234-0042-77",
+    });
+
+    expect(apiClient.exchangeGoogleCode).toHaveBeenCalledTimes(1);
+    expect(apiClient.me).not.toHaveBeenCalled();
+    expect(store.getState().status).toBe("authenticated");
+    expect(store.getState().role).toBe("patient");
+    expect(store.getState().profile?.tenantId).toBe("tenant-patient");
+    expect(storage.save).toHaveBeenCalledTimes(1);
+  });
+
   it("clears state and storage on logout", async () => {
     const { apiClient, storage } = createDependencies();
     const tokens = makeTokens();
@@ -171,5 +240,42 @@ describe("auth store", () => {
 
     expect(store.getState().profile?.onboardingCompleted).toBe(true);
     expect(storage.save).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists onboarding completion in backend and updates profile", async () => {
+    const { apiClient, storage } = createDependencies();
+    const tokens = makeTokens();
+    const profile = makeProfile();
+
+    apiClient.login.mockResolvedValue(tokens);
+    apiClient.me.mockResolvedValue(profile);
+    apiClient.completeOnboarding.mockResolvedValue({
+      ...profile,
+      onboardingCompleted: true,
+      fullName: "Dra. Cori Prime",
+    });
+
+    const store = createAuthStore({
+      apiClient,
+      storage,
+    });
+
+    await store.actions.loginPsychologist({
+      email: "dr@cori.dev",
+      password: "dev123456",
+    });
+    await store.actions.completePsychologistOnboarding({
+      displayName: "Dra. Cori Prime",
+      clinicalApproach: "TCC",
+      serviceModality: "online",
+    });
+
+    expect(apiClient.completeOnboarding).toHaveBeenCalledWith("access-token", {
+      displayName: "Dra. Cori Prime",
+      clinicalApproach: "TCC",
+      serviceModality: "online",
+    });
+    expect(store.getState().profile?.onboardingCompleted).toBe(true);
+    expect(store.getState().profile?.fullName).toBe("Dra. Cori Prime");
   });
 });

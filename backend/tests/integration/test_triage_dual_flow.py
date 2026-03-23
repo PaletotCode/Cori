@@ -27,6 +27,45 @@ def create_invite(client, *, access_token: str, payload: dict[str, object]) -> d
     return response.json()
 
 
+def validate_access_code(client, *, code: str) -> dict[str, object]:
+    response = client.post(
+        "/intakes/access-codes/validate",
+        json={"code": code},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def activate_access_code(client, *, code: str) -> dict[str, object]:
+    response = client.post(
+        "/intakes/access-codes/activate",
+        json={"code": code},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def get_queue_summary(client, *, access_token: str) -> dict[str, int]:
+    response = client.get(
+        "/intakes/queue/summary",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def build_wrong_but_well_formed_access_code(access_code: str) -> str:
+    key, secret, _ = access_code.strip().upper().split("-")
+    candidate_int = (int(secret) + 1) % 10_000
+    candidate_secret = f"{candidate_int:04d}"
+    if candidate_secret == secret:
+        candidate_secret = f"{(candidate_int + 1) % 10_000:04d}"
+
+    checksum_total = sum(ord(char) for char in f"{key}{candidate_secret}")
+    checksum = f"{checksum_total % 97:02d}"
+    return f"{key}-{candidate_secret}-{checksum}"
+
+
 def test_simple_invite_flow_end_to_end(client, seed_tenant) -> None:
     seeded = seed_tenant(
         tenant_name="Tenant Simple Invite",
@@ -50,7 +89,20 @@ def test_simple_invite_flow_end_to_end(client, seed_tenant) -> None:
     assert invite["mode"] == "simple_invite"
     assert invite["status"] == "pending_submission"
     assert len(invite["invite_token"]) >= 20
+    assert isinstance(invite["access_code"], str)
+    assert len(invite["access_code"]) >= 10
     assert "token=" in invite["invite_link"]
+
+    summary_after_invite = get_queue_summary(client, access_token=access_token)
+    assert summary_after_invite["total"] == 1
+    assert summary_after_invite["pending_submission"] == 1
+    assert summary_after_invite["submitted"] == 0
+    assert summary_after_invite["actionable"] == 0
+
+    validation = validate_access_code(client, code=invite["access_code"])
+    assert validation["valid"] is True
+    assert validation["intake_id"] == invite["intake_id"]
+    assert validation["status"] == "pending_submission"
 
     public_view = client.get(f"/intake-links/{invite['invite_token']}")
     assert public_view.status_code == 200
@@ -72,6 +124,11 @@ def test_simple_invite_flow_end_to_end(client, seed_tenant) -> None:
     submit_payload = submit.json()
     assert submit_payload["status"] == "submitted"
 
+    summary_after_submit = get_queue_summary(client, access_token=access_token)
+    assert summary_after_submit["pending_submission"] == 0
+    assert summary_after_submit["submitted"] == 1
+    assert summary_after_submit["actionable"] == 1
+
     queue = client.get(
         "/intakes/queue?statuses=submitted",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -91,6 +148,15 @@ def test_simple_invite_flow_end_to_end(client, seed_tenant) -> None:
     review_payload = review.json()
     assert review_payload["status"] == "approved"
     assert review_payload["activated_patient_id"] is not None
+
+    summary_after_approval = get_queue_summary(client, access_token=access_token)
+    assert summary_after_approval["submitted"] == 0
+    assert summary_after_approval["approved"] == 1
+    assert summary_after_approval["actionable"] == 0
+
+    validation_after_approval = validate_access_code(client, code=invite["access_code"])
+    assert validation_after_approval["valid"] is False
+    assert "nao esta mais disponivel" in validation_after_approval["message"].lower()
 
     detail = client.get(
         f"/intakes/{invite['intake_id']}",
@@ -313,3 +379,215 @@ def test_tenant_isolation_and_request_auth_for_triage_endpoints(client, seed_ten
 
     unauth_queue = client.get("/intakes/queue")
     assert unauth_queue.status_code == 401
+
+
+def test_access_code_rotate_and_lock_protection(client, seed_tenant, session_factory) -> None:
+    seeded = seed_tenant(
+        tenant_name="Tenant Access Code Lock",
+        email="access.code@cori.dev",
+        password="access123",
+        user_full_name="Dra. Codigo",
+        psychologist_display_name="Dra. Codigo",
+        patient_name="Paciente Codigo",
+    )
+    access_token = login_access_token(client, email=seeded.email, password=seeded.password)
+
+    invite = create_invite(
+        client,
+        access_token=access_token,
+        payload={
+            "mode": "simple_invite",
+            "expires_in_hours": 72,
+            "access_code_alias": "Didia",
+        },
+    )
+    original_code = invite["access_code"]
+
+    for _ in range(5):
+        wrong_code = build_wrong_but_well_formed_access_code(original_code)
+        invalid = validate_access_code(client, code=wrong_code)
+        assert invalid["valid"] is False
+
+    locked = validate_access_code(client, code=original_code)
+    assert locked["valid"] is False
+    assert "alguns minutos" in locked["message"].lower()
+
+    rotate = client.post(
+        f"/intakes/{invite['intake_id']}/access-code/rotate",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"alias": "Didia"},
+    )
+    assert rotate.status_code == 200
+    rotated_payload = rotate.json()
+    assert rotated_payload["intake_id"] == invite["intake_id"]
+    assert rotated_payload["access_code"] != original_code
+
+    old_validation = validate_access_code(client, code=original_code)
+    assert old_validation["valid"] is False
+
+    new_validation = validate_access_code(client, code=rotated_payload["access_code"])
+    assert new_validation["valid"] is True
+    assert new_validation["intake_id"] == invite["intake_id"]
+
+    with session_factory() as admin_session:
+        admin_session.execute(text("SET LOCAL ROLE cori_app"))
+        admin_session.execute(text("SELECT set_config('app.rls_bypass', 'on', true)"))
+        intake = admin_session.scalar(
+            select(PatientIntake).where(PatientIntake.id == invite["intake_id"])
+        )
+        assert intake is not None
+        assert intake.access_code_attempts == 0
+        assert intake.access_code_locked_until is None
+
+
+def test_access_code_activation_requires_approval_and_rotates_token(client, seed_tenant) -> None:
+    seeded = seed_tenant(
+        tenant_name="Tenant Access Activation",
+        email="access.activation@cori.dev",
+        password="activation123",
+        user_full_name="Dra. Ativacao",
+        psychologist_display_name="Dra. Ativacao",
+        patient_name="Paciente Ativacao",
+    )
+    access_token = login_access_token(client, email=seeded.email, password=seeded.password)
+
+    invite = create_invite(
+        client,
+        access_token=access_token,
+        payload={
+            "mode": "simple_invite",
+            "expires_in_hours": 72,
+            "access_code_alias": "Didia",
+        },
+    )
+
+    pending_activation = activate_access_code(client, code=invite["access_code"])
+    assert pending_activation["access_granted"] is False
+    assert pending_activation["status"] == "pending_submission"
+    assert "falta enviar" in pending_activation["message"].lower()
+    assert pending_activation["patient_access_token"] is None
+
+    submit = client.post(
+        f"/intake-links/{invite['invite_token']}/submit",
+        json={
+            "patient_full_name": "Paciente Ativacao",
+            "patient_email": "paciente.ativacao@cori.dev",
+            "patient_phone": "+55 65 99999-0010",
+            "consent_terms_accepted": True,
+            "consent_privacy_accepted": True,
+        },
+    )
+    assert submit.status_code == 200
+    assert submit.json()["status"] == "submitted"
+
+    waiting_activation = activate_access_code(client, code=invite["access_code"])
+    assert waiting_activation["access_granted"] is False
+    assert waiting_activation["status"] == "submitted"
+    assert "aguarde" in waiting_activation["message"].lower()
+    assert waiting_activation["patient_access_token"] is None
+
+    review = client.post(
+        f"/intakes/{invite['intake_id']}/review",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"action": "approve"},
+    )
+    assert review.status_code == 200
+    assert review.json()["status"] == "approved"
+    approved_patient_id = review.json()["activated_patient_id"]
+    assert approved_patient_id is not None
+
+    first_activation = activate_access_code(client, code=invite["access_code"])
+    assert first_activation["access_granted"] is True
+    assert first_activation["status"] == "approved"
+    assert first_activation["tenant_id"] == str(seeded.tenant_id)
+    assert first_activation["patient_id"] == approved_patient_id
+    first_public_token = first_activation["patient_access_token"]
+    assert isinstance(first_public_token, str)
+    assert len(first_public_token) >= 20
+
+    first_preferences = client.get(f"/notification-links/{first_public_token}/preferences")
+    assert first_preferences.status_code == 200
+
+    second_activation = activate_access_code(client, code=invite["access_code"])
+    assert second_activation["access_granted"] is True
+    second_public_token = second_activation["patient_access_token"]
+    assert isinstance(second_public_token, str)
+    assert second_public_token != first_public_token
+
+    old_token_preferences = client.get(f"/notification-links/{first_public_token}/preferences")
+    assert old_token_preferences.status_code == 404
+
+    new_token_preferences = client.get(f"/notification-links/{second_public_token}/preferences")
+    assert new_token_preferences.status_code == 200
+
+    timeline = client.get(
+        f"/intakes/timeline-events?intake_id={invite['intake_id']}",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert timeline.status_code == 200
+    event_types = {event["event_type"] for event in timeline.json()}
+    assert "patient_portal_access_issued" in event_types
+
+
+def test_realtime_emits_intake_updates_for_tenant(client, seed_tenant) -> None:
+    seeded = seed_tenant(
+        tenant_name="Tenant Realtime Intake",
+        email="realtime.intake@cori.dev",
+        password="realtime123",
+        user_full_name="Dra. Realtime Intake",
+        psychologist_display_name="Dra. Realtime Intake",
+        patient_name="Paciente Realtime Intake",
+    )
+    access_token = login_access_token(client, email=seeded.email, password=seeded.password)
+
+    invite = create_invite(
+        client,
+        access_token=access_token,
+        payload={"mode": "simple_invite", "expires_in_hours": 72},
+    )
+
+    with client.websocket_connect(f"/ws?token={access_token}") as websocket:
+        connected = websocket.receive_json()
+        assert connected["type"] == "connected"
+
+        websocket.send_json(
+            {
+                "type": "subscribe",
+                "channel": f"tenant:{seeded.tenant_id}",
+            }
+        )
+
+        submit = client.post(
+            f"/intake-links/{invite['invite_token']}/submit",
+            json={
+                "patient_full_name": "Paciente Realtime Intake",
+                "patient_email": "paciente.realtime@cori.dev",
+                "consent_terms_accepted": True,
+                "consent_privacy_accepted": True,
+            },
+        )
+        assert submit.status_code == 200
+
+        submitted_notification = websocket.receive_json()
+        assert submitted_notification["type"] == "notification"
+        assert submitted_notification["event_type"] == "intake_submitted"
+        assert submitted_notification["category"] == "triage"
+        assert submitted_notification["entity_type"] == "intake"
+        assert submitted_notification["entity_id"] == invite["intake_id"]
+        assert submitted_notification["metadata"]["status"] == "submitted"
+
+        review = client.post(
+            f"/intakes/{invite['intake_id']}/review",
+            headers={"Authorization": f"Bearer {access_token}"},
+            json={"action": "approve"},
+        )
+        assert review.status_code == 200
+        assert review.json()["status"] == "approved"
+
+        approved_notification = websocket.receive_json()
+        assert approved_notification["type"] == "notification"
+        assert approved_notification["event_type"] == "intake_approved"
+        assert approved_notification["category"] == "triage"
+        assert approved_notification["entity_type"] == "intake"
+        assert approved_notification["entity_id"] == invite["intake_id"]
+        assert approved_notification["metadata"]["status"] == "approved"

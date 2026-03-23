@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from typing import Literal
 from uuid import UUID, uuid4
 
 import jwt
@@ -13,6 +14,7 @@ from fastapi.security import OAuth2PasswordBearer
 from app.core.config import settings
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+AuthTokenRole = Literal["psychologist", "patient"]
 
 
 class TokenType(str, Enum):
@@ -24,6 +26,7 @@ class TokenType(str, Enum):
 class TokenData:
     user_id: UUID
     tenant_id: UUID
+    role: AuthTokenRole
     token_type: TokenType
     expires_at: datetime
     jti: UUID | None
@@ -68,6 +71,7 @@ def _build_payload(
     *,
     user_id: UUID,
     tenant_id: UUID,
+    role: AuthTokenRole,
     token_type: TokenType,
     expires_delta: timedelta,
     jti: UUID | None = None,
@@ -77,6 +81,7 @@ def _build_payload(
     payload: dict[str, str | int] = {
         "sub": str(user_id),
         "tenant_id": str(tenant_id),
+        "role": role,
         "type": token_type.value,
         "iat": int(issued_at.timestamp()),
         "exp": int(expires_at.timestamp()),
@@ -86,10 +91,16 @@ def _build_payload(
     return payload, expires_at
 
 
-def create_access_token(*, user_id: UUID, tenant_id: UUID) -> tuple[str, datetime]:
+def create_access_token(
+    *,
+    user_id: UUID,
+    tenant_id: UUID,
+    role: AuthTokenRole,
+) -> tuple[str, datetime]:
     payload, expires_at = _build_payload(
         user_id=user_id,
         tenant_id=tenant_id,
+        role=role,
         token_type=TokenType.ACCESS,
         expires_delta=timedelta(minutes=settings.access_token_exp_minutes),
     )
@@ -97,11 +108,17 @@ def create_access_token(*, user_id: UUID, tenant_id: UUID) -> tuple[str, datetim
     return token, expires_at
 
 
-def create_refresh_token(*, user_id: UUID, tenant_id: UUID) -> tuple[str, datetime, UUID]:
+def create_refresh_token(
+    *,
+    user_id: UUID,
+    tenant_id: UUID,
+    role: AuthTokenRole,
+) -> tuple[str, datetime, UUID]:
     refresh_jti = uuid4()
     payload, expires_at = _build_payload(
         user_id=user_id,
         tenant_id=tenant_id,
+        role=role,
         token_type=TokenType.REFRESH,
         expires_delta=timedelta(days=settings.refresh_token_exp_days),
         jti=refresh_jti,
@@ -119,6 +136,7 @@ def decode_token(token: str, *, expected_type: TokenType | None = None) -> Token
     token_type_raw = payload.get("type")
     sub = payload.get("sub")
     tenant_id_raw = payload.get("tenant_id")
+    role_raw = payload.get("role")
     exp = payload.get("exp")
     jti_raw = payload.get("jti")
 
@@ -128,6 +146,12 @@ def decode_token(token: str, *, expected_type: TokenType | None = None) -> Token
     token_type = TokenType(token_type_raw)
     if expected_type is not None and token_type != expected_type:
         raise TokenValidationError("Tipo de token nao permitido para esta operacao.")
+
+    if not isinstance(role_raw, str):
+        role_raw = "psychologist"
+    if role_raw not in {"psychologist", "patient"}:
+        raise TokenValidationError("Role de token invalido.")
+    role: AuthTokenRole = "psychologist" if role_raw == "psychologist" else "patient"
 
     if not isinstance(sub, str) or not isinstance(tenant_id_raw, str) or not isinstance(exp, int):
         raise TokenValidationError("Payload do token incompleto.")
@@ -144,6 +168,7 @@ def decode_token(token: str, *, expected_type: TokenType | None = None) -> Token
     return TokenData(
         user_id=user_id,
         tenant_id=tenant_id,
+        role=role,
         token_type=token_type,
         expires_at=expires_at,
         jti=jti,

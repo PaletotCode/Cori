@@ -22,6 +22,8 @@ class RealtimeConnectionContext:
 
 def _extract_access_context(access_token: str) -> RealtimeConnectionContext:
     token_data = decode_token(access_token.strip(), expected_type=TokenType.ACCESS)
+    if token_data.role != "psychologist":
+        raise TokenValidationError("Perfil sem permissao para realtime administrativo.")
     tenant_channel = f"tenant:{token_data.tenant_id}"
     return RealtimeConnectionContext(
         tenant_id=token_data.tenant_id,

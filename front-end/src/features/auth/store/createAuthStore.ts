@@ -1,7 +1,13 @@
 import { createStore } from "../../../shared/store/createStore";
 import type { AuthApiClient } from "../api/authApiClient";
 import { AuthApiError } from "../api/authApiClient";
-import type { AuthProfile, AuthTokens, LoginRequest } from "../api/types";
+import type {
+  AuthProfile,
+  AuthTokens,
+  CompleteOnboardingRequest,
+  GoogleOAuthExchangeRequest,
+  LoginRequest,
+} from "../api/types";
 import type { AuthRole, AuthSessionStorage, PersistedAuthSession } from "../storage/authSessionStorage";
 
 export type AuthStatus = "anonymous" | "authenticated";
@@ -24,6 +30,8 @@ export interface AuthStoreDependencies {
 export interface AuthStoreActions {
   hydrate: () => Promise<void>;
   loginPsychologist: (payload: LoginRequest) => Promise<void>;
+  loginWithGoogle: (payload: GoogleOAuthExchangeRequest) => Promise<void>;
+  completePsychologistOnboarding: (payload: CompleteOnboardingRequest) => Promise<void>;
   refreshSession: () => Promise<void>;
   logout: () => Promise<void>;
   setOnboardingCompleted: (onboardingCompleted: boolean) => Promise<void>;
@@ -68,6 +76,43 @@ function buildPersistedSession(
     tokens,
     profile,
   };
+}
+
+function buildPatientProfile(tenantId: string): AuthProfile {
+  return {
+    userId: "patient-session",
+    tenantId,
+    psychologistId: null,
+    email: "",
+    fullName: "Paciente",
+    onboardingCompleted: false,
+  };
+}
+
+function decodeBase64Url(value: string): string {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+  if (typeof globalThis.atob === "function") {
+    return globalThis.atob(padded);
+  }
+  return "";
+}
+
+function tryReadTenantIdFromJwt(accessToken: string): string | null {
+  const chunks = accessToken.split(".");
+  if (chunks.length !== 3) {
+    return null;
+  }
+  try {
+    const claims = JSON.parse(decodeBase64Url(chunks[1])) as Record<string, unknown>;
+    const tenantClaim = claims.tenant_id;
+    if (typeof tenantClaim === "string" && tenantClaim.length > 0) {
+      return tenantClaim;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function createAuthStore(dependencies: AuthStoreDependencies): AuthStore {
@@ -123,6 +168,11 @@ export function createAuthStore(dependencies: AuthStoreDependencies): AuthStore 
           return;
         }
 
+        if (persisted.role === "patient") {
+          setAuthenticatedState(persisted.role, persisted.tokens, persisted.profile);
+          return;
+        }
+
         const profile = await dependencies.apiClient.me(persisted.tokens.accessToken);
         setAuthenticatedState(persisted.role, persisted.tokens, profile);
         await dependencies.storage.save(buildPersistedSession(persisted.role, persisted.tokens, profile));
@@ -153,6 +203,66 @@ export function createAuthStore(dependencies: AuthStoreDependencies): AuthStore 
       }
     },
 
+    async loginWithGoogle(payload: GoogleOAuthExchangeRequest): Promise<void> {
+      baseStore.setState((previous) => ({
+        ...previous,
+        loading: true,
+        error: null,
+      }));
+
+      try {
+        const tokens = await dependencies.apiClient.exchangeGoogleCode(payload);
+        const role: AuthRole = payload.role;
+        const profile =
+          role === "patient"
+            ? buildPatientProfile(tryReadTenantIdFromJwt(tokens.accessToken) ?? payload.tenantId)
+            : await dependencies.apiClient.me(tokens.accessToken);
+
+        await dependencies.storage.save(buildPersistedSession(role, tokens, profile));
+        setAuthenticatedState(role, tokens, profile);
+      } catch (error) {
+        const userMessage = toUserMessage(error);
+        setAnonymousState(userMessage);
+        throw error;
+      }
+    },
+
+    async completePsychologistOnboarding(payload: CompleteOnboardingRequest): Promise<void> {
+      const currentState = baseStore.getState();
+      if (
+        currentState.status !== "authenticated" ||
+        currentState.role !== "psychologist" ||
+        currentState.tokens === null
+      ) {
+        throw new Error("Sessao de psicologo indisponivel para concluir onboarding.");
+      }
+
+      baseStore.setState((previous) => ({
+        ...previous,
+        loading: true,
+        error: null,
+      }));
+
+      try {
+        const profile = await dependencies.apiClient.completeOnboarding(
+          currentState.tokens.accessToken,
+          payload,
+        );
+        await dependencies.storage.save(
+          buildPersistedSession(currentState.role, currentState.tokens, profile),
+        );
+        setAuthenticatedState(currentState.role, currentState.tokens, profile);
+      } catch (error) {
+        const userMessage = toUserMessage(error);
+        baseStore.setState((previous) => ({
+          ...previous,
+          loading: false,
+          error: userMessage,
+        }));
+        throw error;
+      }
+    },
+
     async refreshSession(): Promise<void> {
       const currentState = baseStore.getState();
       if (currentState.status !== "authenticated" || currentState.tokens === null) {
@@ -169,8 +279,15 @@ export function createAuthStore(dependencies: AuthStoreDependencies): AuthStore 
         const tokens = await dependencies.apiClient.refresh({
           refresh_token: currentState.tokens.refreshToken,
         });
-        const profile = currentState.profile ?? (await dependencies.apiClient.me(tokens.accessToken));
         const role = currentState.role ?? "psychologist";
+        const persistedTenantId =
+          currentState.profile !== null && typeof currentState.profile.tenantId === "string"
+            ? currentState.profile.tenantId
+            : "tenant-patient";
+        const profile =
+          role === "patient"
+            ? currentState.profile ?? buildPatientProfile(persistedTenantId)
+            : currentState.profile ?? (await dependencies.apiClient.me(tokens.accessToken));
 
         await dependencies.storage.save(buildPersistedSession(role, tokens, profile));
         setAuthenticatedState(role, tokens, profile);

@@ -5,6 +5,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { useAuthStore } from "../features/auth/hooks/useAuthStore";
+import { InAppNotificationsOverlay } from "../features/notifications/components/InAppNotificationsOverlay";
 import { authStore } from "../features/auth/store/authStore";
 import { realtimeStore } from "../features/realtime/store/realtimeStore";
 import { applyGlobalTypographyContract } from "../shared/ui/typography";
@@ -57,10 +58,20 @@ export function AppBootstrap({ children }: AppBootstrapProps) {
     );
   }
 
-  return <SafeAreaProvider>{children}</SafeAreaProvider>;
+  return (
+    <SafeAreaProvider>
+      <View style={styles.appRoot}>
+        {children}
+        <InAppNotificationsOverlay />
+      </View>
+    </SafeAreaProvider>
+  );
 }
 
 const styles = StyleSheet.create({
+  appRoot: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     alignItems: "center",

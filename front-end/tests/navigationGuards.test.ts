@@ -18,56 +18,81 @@ describe("navigation guards", () => {
     const redirect = resolveProtectedRouteRedirect({
       hydrated: true,
       status: "anonymous",
+      role: null,
       onboardingCompleted: null,
     });
 
     expect(redirect).toBe("/psicologo/login");
   });
 
-  it("resolves root to onboarding when authenticated without onboarding completion", () => {
-    const route = resolveInitialRoute({
+  it("blocks protected routes for authenticated patient role", () => {
+    const redirect = resolveProtectedRouteRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "patient",
       onboardingCompleted: false,
     });
 
-    expect(route).toBe("/psicologo/onboarding");
+    expect(redirect).toBe("/psicologo/login");
+  });
+
+  it("resolves root to login onboarding flow when authenticated without onboarding completion", () => {
+    const route = resolveInitialRoute({
+      hydrated: true,
+      status: "authenticated",
+      role: "psychologist",
+      onboardingCompleted: false,
+    });
+
+    expect(route).toBe("/psicologo/login");
   });
 
   it("resolves root to active session when onboarding is completed", () => {
     const route = resolveInitialRoute({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: true,
     });
 
     expect(route).toBe("/psicologo/sessao");
   });
 
-  it("redirects auth routes using onboarding status", () => {
+  it("keeps authenticated pending onboarding inside auth flow", () => {
     const redirect = resolveAuthRouteRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
 
-    expect(redirect).toBe("/psicologo/onboarding");
+    expect(redirect).toBeNull();
   });
 
   it("blocks session route while onboarding is pending", () => {
     const redirect = resolvePsychologistSessionRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
 
-    expect(redirect).toBe("/psicologo/onboarding");
+    expect(redirect).toBe("/psicologo/login");
   });
 
-  it("redirects onboarding to session when already completed", () => {
+  it("redirects onboarding route to login flow when pending and to session when completed", () => {
+    const pendingRedirect = resolvePsychologistOnboardingRedirect({
+      hydrated: true,
+      status: "authenticated",
+      role: "psychologist",
+      onboardingCompleted: false,
+    });
+    expect(pendingRedirect).toBe("/psicologo/login");
+
     const redirect = resolvePsychologistOnboardingRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: true,
     });
 
@@ -78,23 +103,26 @@ describe("navigation guards", () => {
     const redirect = resolvePsychologistSettingsRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
 
-    expect(redirect).toBe("/psicologo/onboarding");
+    expect(redirect).toBe("/psicologo/login");
   });
 
   it("allows triage route only after onboarding completion", () => {
     const blocked = resolvePsychologistTriageRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
-    expect(blocked).toBe("/psicologo/onboarding");
+    expect(blocked).toBe("/psicologo/login");
 
     const allowed = resolvePsychologistTriageRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: true,
     });
     expect(allowed).toBeNull();
@@ -104,13 +132,15 @@ describe("navigation guards", () => {
     const blocked = resolvePsychologistPatientsRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
-    expect(blocked).toBe("/psicologo/onboarding");
+    expect(blocked).toBe("/psicologo/login");
 
     const allowed = resolvePsychologistPatientsRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: true,
     });
     expect(allowed).toBeNull();
@@ -120,13 +150,15 @@ describe("navigation guards", () => {
     const blocked = resolvePsychologistAgendaRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
-    expect(blocked).toBe("/psicologo/onboarding");
+    expect(blocked).toBe("/psicologo/login");
 
     const allowed = resolvePsychologistAgendaRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: true,
     });
     expect(allowed).toBeNull();
@@ -136,13 +168,15 @@ describe("navigation guards", () => {
     const blocked = resolvePsychologistActivitiesRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
-    expect(blocked).toBe("/psicologo/onboarding");
+    expect(blocked).toBe("/psicologo/login");
 
     const allowed = resolvePsychologistActivitiesRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: true,
     });
     expect(allowed).toBeNull();
@@ -152,13 +186,15 @@ describe("navigation guards", () => {
     const blocked = resolvePsychologistFormsRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
-    expect(blocked).toBe("/psicologo/onboarding");
+    expect(blocked).toBe("/psicologo/login");
 
     const allowed = resolvePsychologistFormsRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: true,
     });
     expect(allowed).toBeNull();
@@ -168,15 +204,27 @@ describe("navigation guards", () => {
     const blocked = resolvePsychologistTimelineRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: false,
     });
-    expect(blocked).toBe("/psicologo/onboarding");
+    expect(blocked).toBe("/psicologo/login");
 
     const allowed = resolvePsychologistTimelineRedirect({
       hydrated: true,
       status: "authenticated",
+      role: "psychologist",
       onboardingCompleted: true,
     });
     expect(allowed).toBeNull();
+  });
+
+  it("blocks timeline route for patient role", () => {
+    const redirect = resolvePsychologistTimelineRedirect({
+      hydrated: true,
+      status: "authenticated",
+      role: "patient",
+      onboardingCompleted: true,
+    });
+    expect(redirect).toBe("/psicologo/login");
   });
 });

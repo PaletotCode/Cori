@@ -24,6 +24,8 @@ export interface PatientListItem {
   preferredContactChannel: PatientContactChannel;
   profileSource: PatientProfileSource;
   whatsappNumberValid: boolean;
+  profilePhotoUrl: string | null;
+  profileBannerUrl: string | null;
   updatedAt: string;
 }
 
@@ -40,6 +42,8 @@ export interface PatientDetail {
   emergencyContactPhone: string | null;
   preferredContactChannel: PatientContactChannel;
   communicationNotes: string | null;
+  profilePhotoUrl: string | null;
+  profileBannerUrl: string | null;
   profileSource: PatientProfileSource;
   whatsappNumberValid: boolean;
   createdAt: string;
@@ -57,6 +61,8 @@ export interface PatientCreatePayload {
   emergencyContactPhone?: string;
   preferredContactChannel?: PatientContactChannel;
   communicationNotes?: string;
+  profilePhotoUrl?: string;
+  profileBannerUrl?: string;
 }
 
 export interface PatientUpdatePayload extends PatientCreatePayload {

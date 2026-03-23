@@ -40,6 +40,31 @@ export const notificationsStore = {
       });
     },
 
+    markAsRead(id: string): void {
+      baseStore.setState((previous) => {
+        let changed = false;
+        const nextItems = previous.items.map((item) => {
+          if (item.id !== id || item.read) {
+            return item;
+          }
+          changed = true;
+          return {
+            ...item,
+            read: true,
+          };
+        });
+
+        if (!changed) {
+          return previous;
+        }
+
+        return {
+          items: nextItems,
+          unreadCount: nextItems.filter((item) => !item.read).length,
+        };
+      });
+    },
+
     markAllAsRead(): void {
       baseStore.setState((previous) => {
         const nextItems = previous.items.map((item) => ({

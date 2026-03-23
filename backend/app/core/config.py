@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_exp_minutes: int = 30
     refresh_token_exp_days: int = 15
+    google_oauth_client_id: str = ""
+    google_oauth_ios_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    google_oauth_token_url: str = "https://oauth2.googleapis.com/token"
+    google_oauth_userinfo_url: str = "https://openidconnect.googleapis.com/v1/userinfo"
+    google_oauth_http_timeout_seconds: int = 8
+    google_oauth_allowed_redirect_uris: str = ""
     patient_invite_base_url: str = "http://localhost:8081/paciente/convite"
     patient_sessions_base_url: str = "http://localhost:8081/paciente/sessoes"
     patient_activities_base_url: str = "http://localhost:8081/paciente/atividades"

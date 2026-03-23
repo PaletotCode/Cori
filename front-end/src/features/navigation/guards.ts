@@ -1,8 +1,10 @@
 import type { AuthStatus } from "../auth/store/createAuthStore";
+import type { AuthRole } from "../auth/storage/authSessionStorage";
 
 export interface NavigationAuthSnapshot {
   hydrated: boolean;
   status: AuthStatus;
+  role: AuthRole | null;
   onboardingCompleted: boolean | null;
 }
 
@@ -18,11 +20,11 @@ const FORMS_ROUTE = "/psicologo/formularios";
 const TIMELINE_ROUTE = "/psicologo/timeline";
 
 function resolveDefaultAuthenticatedRoute(auth: NavigationAuthSnapshot): string {
-  if (auth.status !== "authenticated") {
+  if (auth.status !== "authenticated" || auth.role !== "psychologist") {
     return LOGIN_ROUTE;
   }
 
-  return auth.onboardingCompleted ? SESSION_ROUTE : ONBOARDING_ROUTE;
+  return auth.onboardingCompleted ? SESSION_ROUTE : LOGIN_ROUTE;
 }
 
 export function resolveInitialRoute(auth: NavigationAuthSnapshot): string {
@@ -38,7 +40,7 @@ export function resolveProtectedRouteRedirect(auth: NavigationAuthSnapshot): str
     return null;
   }
 
-  return auth.status === "authenticated" ? null : LOGIN_ROUTE;
+  return auth.status === "authenticated" && auth.role === "psychologist" ? null : LOGIN_ROUTE;
 }
 
 export function resolveAuthRouteRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -46,7 +48,15 @@ export function resolveAuthRouteRedirect(auth: NavigationAuthSnapshot): string |
     return null;
   }
 
-  return auth.status === "authenticated" ? resolveDefaultAuthenticatedRoute(auth) : null;
+  if (auth.status !== "authenticated") {
+    return null;
+  }
+
+  if (auth.role !== "psychologist") {
+    return null;
+  }
+
+  return auth.onboardingCompleted ? SESSION_ROUTE : null;
 }
 
 export function resolvePsychologistSessionRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -56,8 +66,11 @@ export function resolvePsychologistSessionRedirect(auth: NavigationAuthSnapshot)
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
   if (!auth.onboardingCompleted) {
-    return ONBOARDING_ROUTE;
+    return LOGIN_ROUTE;
   }
   return null;
 }
@@ -69,7 +82,10 @@ export function resolvePsychologistOnboardingRedirect(auth: NavigationAuthSnapsh
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
-  return auth.onboardingCompleted ? SESSION_ROUTE : null;
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
+  return auth.onboardingCompleted ? SESSION_ROUTE : LOGIN_ROUTE;
 }
 
 export function resolvePsychologistSettingsRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -79,7 +95,10 @@ export function resolvePsychologistSettingsRedirect(auth: NavigationAuthSnapshot
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
-  return auth.onboardingCompleted ? null : ONBOARDING_ROUTE;
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
+  return auth.onboardingCompleted ? null : LOGIN_ROUTE;
 }
 
 export function resolvePsychologistTriageRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -89,7 +108,10 @@ export function resolvePsychologistTriageRedirect(auth: NavigationAuthSnapshot):
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
-  return auth.onboardingCompleted ? null : ONBOARDING_ROUTE;
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
+  return auth.onboardingCompleted ? null : LOGIN_ROUTE;
 }
 
 export function resolvePsychologistPatientsRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -99,7 +121,10 @@ export function resolvePsychologistPatientsRedirect(auth: NavigationAuthSnapshot
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
-  return auth.onboardingCompleted ? null : ONBOARDING_ROUTE;
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
+  return auth.onboardingCompleted ? null : LOGIN_ROUTE;
 }
 
 export function resolvePsychologistAgendaRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -109,7 +134,10 @@ export function resolvePsychologistAgendaRedirect(auth: NavigationAuthSnapshot):
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
-  return auth.onboardingCompleted ? null : ONBOARDING_ROUTE;
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
+  return auth.onboardingCompleted ? null : LOGIN_ROUTE;
 }
 
 export function resolvePsychologistActivitiesRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -119,7 +147,10 @@ export function resolvePsychologistActivitiesRedirect(auth: NavigationAuthSnapsh
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
-  return auth.onboardingCompleted ? null : ONBOARDING_ROUTE;
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
+  return auth.onboardingCompleted ? null : LOGIN_ROUTE;
 }
 
 export function resolvePsychologistFormsRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -129,7 +160,10 @@ export function resolvePsychologistFormsRedirect(auth: NavigationAuthSnapshot): 
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
-  return auth.onboardingCompleted ? null : ONBOARDING_ROUTE;
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
+  return auth.onboardingCompleted ? null : LOGIN_ROUTE;
 }
 
 export function resolvePsychologistTimelineRedirect(auth: NavigationAuthSnapshot): string | null {
@@ -139,7 +173,10 @@ export function resolvePsychologistTimelineRedirect(auth: NavigationAuthSnapshot
   if (auth.status !== "authenticated") {
     return LOGIN_ROUTE;
   }
-  return auth.onboardingCompleted ? null : ONBOARDING_ROUTE;
+  if (auth.role !== "psychologist") {
+    return LOGIN_ROUTE;
+  }
+  return auth.onboardingCompleted ? null : LOGIN_ROUTE;
 }
 
 export const psychologistRoutes = {

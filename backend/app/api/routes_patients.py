@@ -45,6 +45,8 @@ def _to_list_item(patient: Patient) -> PatientListItemResponse:
         preferred_contact_channel=cast(PatientContactChannel, patient.preferred_contact_channel),
         profile_source=cast(PatientProfileSource, patient.profile_source),
         whatsapp_number_valid=is_valid_whatsapp_number(patient.phone),
+        profile_photo_url=patient.profile_photo_url,
+        profile_banner_url=patient.profile_banner_url,
         updated_at=patient.updated_at,
     )
 
@@ -63,6 +65,8 @@ def _to_detail(patient: Patient) -> PatientDetailResponse:
         emergency_contact_phone=patient.emergency_contact_phone,
         preferred_contact_channel=cast(PatientContactChannel, patient.preferred_contact_channel),
         communication_notes=patient.communication_notes,
+        profile_photo_url=patient.profile_photo_url,
+        profile_banner_url=patient.profile_banner_url,
         profile_source=cast(PatientProfileSource, patient.profile_source),
         whatsapp_number_valid=is_valid_whatsapp_number(patient.phone),
         created_at=patient.created_at,

@@ -30,6 +30,8 @@ class Patient(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     preferred_contact_period: Mapped[str | None] = mapped_column(String(24), nullable=True)
     communication_notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    profile_photo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    profile_banner_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     profile_source: Mapped[str] = mapped_column(String(24), nullable=False, default="manual")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_by_user_id: Mapped[UUID | None] = mapped_column(
@@ -37,6 +39,16 @@ class Patient(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+    portal_access_token_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+    portal_access_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
     tenant = relationship("Tenant", back_populates="patients")

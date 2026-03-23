@@ -108,6 +108,8 @@ describe("psychologist timeline screen", () => {
           preferredContactChannel: "whatsapp" as const,
           profileSource: "manual" as const,
           whatsappNumberValid: true,
+          profilePhotoUrl: null,
+          profileBannerUrl: null,
           updatedAt: "2026-03-18T10:00:00Z",
         },
       ]),

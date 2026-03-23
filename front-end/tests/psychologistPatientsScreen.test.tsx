@@ -2,12 +2,19 @@ import React from "react";
 import { act, create, type ReactTestInstance } from "react-test-renderer";
 
 import type { PatientsApiClient } from "../src/features/patients/api/patientsApiClient";
+import type { TriageApiClient } from "../src/features/triage/api/triageApiClient";
+import type {
+  IntakeDetail,
+  IntakeQueueItem,
+  IntakeReviewResult,
+} from "../src/features/triage/api/types";
 import type {
   PatientChange,
   PatientDetail,
   PatientListItem,
   PatientTimelineEvent,
 } from "../src/features/patients/api/types";
+import { notificationsStore } from "../src/features/notifications/store/notificationsStore";
 import {
   __resetPatientsScreenCacheForTests,
   PsychologistPatientsScreen,
@@ -48,6 +55,10 @@ jest.mock("expo-router", () => ({
   }),
 }));
 
+jest.mock("expo-clipboard", () => ({
+  setStringAsync: jest.fn(async () => undefined),
+}));
+
 jest.mock("react-native-svg", () => {
   const ReactRuntime = jest.requireActual("react") as typeof import("react");
   const Svg = (props: Record<string, unknown>) =>
@@ -81,6 +92,10 @@ jest.mock("react-native", () => {
 
     interpolate(config: { outputRange?: number[] }) {
       return config.outputRange?.[0] ?? this.value;
+    }
+
+    stopAnimation(callback?: (value: number) => void) {
+      callback?.(this.value);
     }
   }
 
@@ -168,6 +183,8 @@ function createApiClient(overrides: Partial<PatientsApiClient> = {}): PatientsAp
     preferredContactChannel: "whatsapp",
     profileSource: "manual",
     whatsappNumberValid: true,
+    profilePhotoUrl: null,
+    profileBannerUrl: null,
     updatedAt: "2026-03-17T20:00:00Z",
   };
 
@@ -184,6 +201,8 @@ function createApiClient(overrides: Partial<PatientsApiClient> = {}): PatientsAp
     emergencyContactPhone: null,
     preferredContactChannel: "whatsapp",
     communicationNotes: "Prefere texto",
+    profilePhotoUrl: null,
+    profileBannerUrl: null,
     profileSource: "manual",
     whatsappNumberValid: true,
     createdAt: "2026-03-17T19:00:00Z",
@@ -229,6 +248,99 @@ function createApiClient(overrides: Partial<PatientsApiClient> = {}): PatientsAp
   };
 }
 
+function createTriageClient(overrides: Partial<TriageApiClient> = {}): TriageApiClient {
+  const baseQueueItem: IntakeQueueItem = {
+    intakeId: "intake-1",
+    mode: "simple_invite",
+    status: "submitted",
+    inviteExpiresAt: "2026-03-23T20:00:00Z",
+    accessCodeExpiresAt: "2026-03-23T20:00:00Z",
+    openedAt: "2026-03-22T19:58:00Z",
+    submittedAt: "2026-03-22T20:00:00Z",
+    patientFullName: "Paciente Aurora",
+    patientPreferredName: "Aurora",
+    patientEmail: "aurora@cori.dev",
+    patientPhone: "+5565999990001",
+    patientBirthDate: "1990-01-01",
+    patientPronouns: null,
+    patientEmergencyContactName: null,
+    patientEmergencyContactPhone: null,
+    patientProfilePhotoUrl: null,
+    patientProfileBannerUrl: null,
+    complementRequestNote: null,
+    activatedPatientId: null,
+    hasTriageAnswers: true,
+  };
+
+  const baseDetail: IntakeDetail = {
+    intakeId: "intake-1",
+    mode: "simple_invite",
+    status: "submitted",
+    inviteExpiresAt: "2026-03-23T20:00:00Z",
+    accessCodeExpiresAt: "2026-03-23T20:00:00Z",
+    openedAt: "2026-03-22T19:58:00Z",
+    submittedAt: "2026-03-22T20:00:00Z",
+    reviewedAt: null,
+    activatedAt: null,
+    patientFullName: "Paciente Aurora",
+    patientPreferredName: "Aurora",
+    patientEmail: "aurora@cori.dev",
+    patientPhone: "+5565999990001",
+    patientBirthDate: "1990-01-01",
+    patientPronouns: null,
+    patientEmergencyContactName: null,
+    patientEmergencyContactPhone: null,
+    patientCommunicationNotes: "Prefere texto",
+    patientProfilePhotoUrl: null,
+    patientProfileBannerUrl: null,
+    customQuestions: [],
+    triageAnswers: null,
+    reviewNote: null,
+    complementRequestNote: null,
+    activatedPatientId: null,
+  };
+
+  const defaultReviewResult: IntakeReviewResult = {
+    intakeId: "intake-1",
+    status: "approved",
+    reviewedAt: "2026-03-22T20:05:00Z",
+    activatedPatientId: "patient-1",
+  };
+
+  return {
+    createInvite: jest.fn(async () => ({
+      intakeId: "intake-1",
+      mode: "simple_invite" as const,
+      status: "pending_submission" as const,
+      inviteToken: "invite-token",
+      inviteLink: "https://invite.cori.dev/intake-1",
+      inviteExpiresAt: "2026-03-23T20:00:00Z",
+      accessCode: "AURORA-1234-56",
+      accessCodeExpiresAt: "2026-03-23T20:00:00Z",
+    })),
+    getQueue: jest.fn(async () => [baseQueueItem]),
+    getIntakeDetail: jest.fn(async () => baseDetail),
+    getPatientIntake: jest.fn(async () => baseDetail),
+    submitPatientIntake: jest.fn(async () => ({
+      intakeId: "intake-1",
+      status: "submitted" as const,
+      submittedAt: "2026-03-22T20:00:00Z",
+    })),
+    reviewIntake: jest.fn(async (_token, _intakeId, payload) => ({
+      ...defaultReviewResult,
+      status: payload.action === "reject" ? ("rejected" as const) : ("approved" as const),
+      activatedPatientId: payload.action === "reject" ? null : "patient-1",
+    })),
+    rotateAccessCode: jest.fn(async () => ({
+      intakeId: "intake-1",
+      accessCode: "AURORA-2234-77",
+      accessCodeExpiresAt: "2026-03-23T21:00:00Z",
+    })),
+    getTimelineEvents: jest.fn(async () => []),
+    ...overrides,
+  };
+}
+
 function createDeferred<TValue>() {
   let resolve!: (value: TValue | PromiseLike<TValue>) => void;
   let reject!: (reason?: unknown) => void;
@@ -249,6 +361,7 @@ describe("psychologist patients screen", () => {
     (globalThis as Record<string, unknown>).cancelAnimationFrame = (() => undefined) as unknown as
       typeof cancelAnimationFrame;
     mockOpenURL.mockClear();
+    notificationsStore.actions.clear();
     __resetPatientsScreenCacheForTests();
   });
 
@@ -280,6 +393,8 @@ describe("psychologist patients screen", () => {
           preferredContactChannel: "whatsapp" as const,
           profileSource: "manual" as const,
           whatsappNumberValid: false,
+          profilePhotoUrl: null,
+          profileBannerUrl: null,
           updatedAt: "2026-03-17T20:00:00Z",
         },
       ]),
@@ -297,6 +412,8 @@ describe("psychologist patients screen", () => {
         preferredContactChannel: "whatsapp" as const,
         preferredContactPeriod: null,
         communicationNotes: null,
+        profilePhotoUrl: null,
+        profileBannerUrl: null,
         profileSource: "manual" as const,
         whatsappNumberValid: false,
         createdAt: "2026-03-17T19:00:00Z",
@@ -340,6 +457,8 @@ describe("psychologist patients screen", () => {
       emergencyContactPhone: null,
       preferredContactChannel: "whatsapp",
       communicationNotes: "Prefere texto",
+      profilePhotoUrl: null,
+      profileBannerUrl: null,
       profileSource: "manual",
       whatsappNumberValid: true,
       createdAt: "2026-03-17T19:00:00Z",
@@ -384,5 +503,116 @@ describe("psychologist patients screen", () => {
 
     expect(listChanges).not.toHaveBeenCalled();
     expect(listTimelineEvents).not.toHaveBeenCalled();
+  });
+
+  it("opens triage preview from pending card review action", async () => {
+    const apiClient = createApiClient();
+    const triageClient = createTriageClient();
+
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        React.createElement(PsychologistPatientsScreen, {
+          apiClient,
+          triageClient,
+          initialTriagePanelVisible: true,
+        }),
+      );
+    });
+    await flushMicrotasks();
+
+    const root = tree!.root;
+    const pendingTab = await waitForTestId(root, "triage-tab-pending");
+    await act(async () => {
+      pendingTab.props.onPress();
+    });
+    await flushMicrotasks();
+
+    const reviewButton = await waitForTestId(root, "triage-pending-review-intake-1");
+    await act(async () => {
+      reviewButton.props.onPress();
+    });
+    await flushMicrotasks();
+
+    expect(triageClient.getIntakeDetail).toHaveBeenCalledWith("access-token", "intake-1");
+  });
+
+  it("approves triage directly from pending card", async () => {
+    const queueItem: IntakeQueueItem = {
+      intakeId: "intake-1",
+      mode: "simple_invite",
+      status: "submitted",
+      inviteExpiresAt: "2026-03-23T20:00:00Z",
+      accessCodeExpiresAt: "2026-03-23T20:00:00Z",
+      openedAt: "2026-03-22T19:58:00Z",
+      submittedAt: "2026-03-22T20:00:00Z",
+      patientFullName: "Paciente Aurora",
+      patientPreferredName: "Aurora",
+      patientEmail: "aurora@cori.dev",
+      patientPhone: "+5565999990001",
+      patientBirthDate: "1990-01-01",
+      patientPronouns: null,
+      patientEmergencyContactName: null,
+      patientEmergencyContactPhone: null,
+      patientProfilePhotoUrl: null,
+      patientProfileBannerUrl: null,
+      complementRequestNote: null,
+      activatedPatientId: null,
+      hasTriageAnswers: true,
+    };
+    const getQueue = jest.fn().mockResolvedValue([queueItem]);
+    const reviewIntake = jest.fn(async () => ({
+      intakeId: "intake-1",
+      status: "approved" as const,
+      reviewedAt: "2026-03-22T20:05:00Z",
+      activatedPatientId: "patient-1",
+    }));
+
+    const apiClient = createApiClient();
+    const triageClient = createTriageClient({
+      getQueue,
+      reviewIntake,
+    });
+
+    let tree: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(
+        React.createElement(PsychologistPatientsScreen, {
+          apiClient,
+          triageClient,
+          initialTriagePanelVisible: true,
+        }),
+      );
+    });
+    await flushMicrotasks();
+
+    const root = tree!.root;
+    const pendingTab = await waitForTestId(root, "triage-tab-pending");
+    await act(async () => {
+      pendingTab.props.onPress();
+    });
+    await flushMicrotasks();
+
+    const approveButton = await waitForTestId(root, "triage-pending-approve-intake-1");
+    await act(async () => {
+      approveButton.props.onPress();
+    });
+    await flushMicrotasks();
+
+    expect(reviewIntake).toHaveBeenCalledTimes(1);
+    expect(reviewIntake).toHaveBeenCalledWith(
+      "access-token",
+      "intake-1",
+      expect.objectContaining({ action: "approve" }),
+    );
+    expect(getQueue.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    const notificationTitles = notificationsStore
+      .getState()
+      .items.map((item) => item.title);
+    expect(notificationTitles).toContain("Paciente aprovado!");
+    expect(
+      notificationTitles.some((title) => title.includes("fez seu primeiro acesso")),
+    ).toBe(true);
   });
 });

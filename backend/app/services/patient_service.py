@@ -54,6 +54,8 @@ class NormalizedPatientProfile:
     emergency_contact_phone: str | None
     preferred_contact_channel: PatientContactChannel
     communication_notes: str | None
+    profile_photo_url: str | None
+    profile_banner_url: str | None
 
 
 def _utcnow() -> datetime:
@@ -197,6 +199,17 @@ def _normalize_phone(value: str | None, *, field_name: str) -> str | None:
     return f"+{digits}"
 
 
+def _normalize_profile_media_url(value: str | None, *, field_name: str) -> str | None:
+    cleaned = _clean_optional(value)
+    if cleaned is None:
+        return None
+    if not (cleaned.startswith("https://") or cleaned.startswith("http://")):
+        raise PatientProfileValidationError(
+            f"{field_name} deve usar URL http:// ou https:// valida."
+        )
+    return cleaned
+
+
 def extract_phone_digits(value: str | None) -> str:
     if value is None:
         return ""
@@ -228,6 +241,14 @@ def normalize_patient_profile_payload(
         ),
         preferred_contact_channel=payload.preferred_contact_channel,
         communication_notes=_clean_optional(payload.communication_notes),
+        profile_photo_url=_normalize_profile_media_url(
+            payload.profile_photo_url,
+            field_name="Foto de perfil",
+        ),
+        profile_banner_url=_normalize_profile_media_url(
+            payload.profile_banner_url,
+            field_name="Banner do paciente",
+        ),
     )
 
 
@@ -243,6 +264,8 @@ def _patient_snapshot(patient: Patient) -> dict[str, object]:
         "emergency_contact_phone": patient.emergency_contact_phone,
         "preferred_contact_channel": patient.preferred_contact_channel,
         "communication_notes": patient.communication_notes,
+        "profile_photo_url": patient.profile_photo_url,
+        "profile_banner_url": patient.profile_banner_url,
         "profile_source": patient.profile_source,
     }
 
@@ -296,6 +319,8 @@ def _apply_normalized_profile(patient: Patient, normalized: NormalizedPatientPro
     patient.emergency_contact_phone = normalized.emergency_contact_phone
     patient.preferred_contact_channel = normalized.preferred_contact_channel
     patient.communication_notes = normalized.communication_notes
+    patient.profile_photo_url = normalized.profile_photo_url
+    patient.profile_banner_url = normalized.profile_banner_url
 
 
 class PatientService:
@@ -344,6 +369,8 @@ class PatientService:
             emergency_contact_phone=normalized.emergency_contact_phone,
             preferred_contact_channel=normalized.preferred_contact_channel,
             communication_notes=normalized.communication_notes,
+            profile_photo_url=normalized.profile_photo_url,
+            profile_banner_url=normalized.profile_banner_url,
         )
         db.add(patient)
         db.flush()

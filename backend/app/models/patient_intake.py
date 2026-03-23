@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -30,6 +30,12 @@ class PatientIntake(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    patient_auth_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     activated_patient_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("patients.id", ondelete="SET NULL"),
@@ -47,14 +53,46 @@ class PatientIntake(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     invite_token_expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    access_code_key: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, unique=True, index=True
+    )
+    access_code_hash: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    access_code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    access_code_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    access_code_locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    access_code_last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     invite_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     custom_form: Mapped[list[dict[str, object]] | None] = mapped_column(JSONB, nullable=True)
     triage_answers: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)
 
     patient_full_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    patient_preferred_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     patient_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     patient_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    patient_birth_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    patient_pronouns: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    patient_emergency_contact_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    patient_emergency_contact_phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    patient_communication_notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    patient_profile_photo_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    patient_profile_banner_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    patient_oauth_google_subject: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    patient_oauth_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    patient_oauth_full_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    patient_oauth_authenticated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     consent_terms_accepted: Mapped[bool] = mapped_column(nullable=False, default=False)
     consent_privacy_accepted: Mapped[bool] = mapped_column(nullable=False, default=False)
 
@@ -69,5 +107,6 @@ class PatientIntake(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tenant = relationship("Tenant", back_populates="patient_intakes")
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     reviewed_by_user = relationship("User", foreign_keys=[reviewed_by_user_id])
+    patient_auth_user = relationship("User", foreign_keys=[patient_auth_user_id])
     activated_patient = relationship("Patient", foreign_keys=[activated_patient_id])
     timeline_events = relationship("TimelineEvent", back_populates="intake")

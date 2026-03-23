@@ -20,11 +20,13 @@ export default function ProtectedLayout() {
   const insets = useSafeAreaInsets();
   const hydrated = useAuthStore((state) => state.hydrated);
   const status = useAuthStore((state) => state.status);
+  const role = useAuthStore((state) => state.role);
   const onboardingCompleted = useAuthStore((state) => state.profile?.onboardingCompleted ?? null);
 
   const redirect = resolveProtectedRouteRedirect({
     hydrated,
     status,
+    role,
     onboardingCompleted,
   });
 

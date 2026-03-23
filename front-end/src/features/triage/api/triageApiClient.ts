@@ -3,10 +3,11 @@ import type {
   IntakeDetail,
   IntakeInviteCreatePayload,
   IntakeInviteCreateResult,
-  IntakePublicSubmitPayload,
-  IntakePublicSubmitResult,
-  IntakePublicView,
+  IntakePatientSubmitPayload,
+  IntakePatientSubmitResult,
   IntakeQueueItem,
+  IntakeRotateCodePayload,
+  IntakeRotateCodeResult,
   IntakeReviewPayload,
   IntakeReviewResult,
   TimelineEvent,
@@ -32,6 +33,7 @@ interface IntakeCustomQuestionResponse {
 interface IntakeInviteCreateRequestBody {
   mode: "simple_invite" | "custom_triage";
   expires_in_hours: number;
+  access_code_alias?: string;
   invite_message?: string;
   custom_questions?: Array<{
     prompt: string;
@@ -52,45 +54,8 @@ interface IntakeInviteCreateResponseBody {
   invite_token: string;
   invite_link: string;
   invite_expires_at: string;
-}
-
-interface IntakePublicViewResponseBody {
-  intake_id: string;
-  mode: "simple_invite" | "custom_triage";
-  status:
-    | "pending_submission"
-    | "submitted"
-    | "complement_requested"
-    | "approved"
-    | "rejected"
-    | "expired";
-  invite_expires_at: string;
-  practice_name: string | null;
-  invite_message: string | null;
-  requires_custom_triage: boolean;
-  custom_questions: IntakeCustomQuestionResponse[];
-  complement_request_note: string | null;
-}
-
-interface IntakePublicSubmitRequestBody {
-  patient_full_name: string;
-  patient_email?: string;
-  patient_phone?: string;
-  consent_terms_accepted: boolean;
-  consent_privacy_accepted: boolean;
-  triage_answers?: Record<string, string>;
-}
-
-interface IntakePublicSubmitResponseBody {
-  intake_id: string;
-  status:
-    | "pending_submission"
-    | "submitted"
-    | "complement_requested"
-    | "approved"
-    | "rejected"
-    | "expired";
-  submitted_at: string | null;
+  access_code: string;
+  access_code_expires_at: string;
 }
 
 interface IntakeQueueItemResponseBody {
@@ -104,11 +69,19 @@ interface IntakeQueueItemResponseBody {
     | "rejected"
     | "expired";
   invite_expires_at: string;
+  access_code_expires_at: string | null;
   opened_at: string | null;
   submitted_at: string | null;
   patient_full_name: string | null;
+  patient_preferred_name: string | null;
   patient_email: string | null;
   patient_phone: string | null;
+  patient_birth_date: string | null;
+  patient_pronouns: string | null;
+  patient_emergency_contact_name: string | null;
+  patient_emergency_contact_phone: string | null;
+  patient_profile_photo_url: string | null;
+  patient_profile_banner_url: string | null;
   complement_request_note: string | null;
   activated_patient_id: string | null;
   has_triage_answers: boolean;
@@ -125,18 +98,55 @@ interface IntakeDetailResponseBody {
     | "rejected"
     | "expired";
   invite_expires_at: string;
+  access_code_expires_at: string | null;
   opened_at: string | null;
   submitted_at: string | null;
   reviewed_at: string | null;
   activated_at: string | null;
   patient_full_name: string | null;
+  patient_preferred_name: string | null;
   patient_email: string | null;
   patient_phone: string | null;
+  patient_birth_date: string | null;
+  patient_pronouns: string | null;
+  patient_emergency_contact_name: string | null;
+  patient_emergency_contact_phone: string | null;
+  patient_communication_notes: string | null;
+  patient_profile_photo_url: string | null;
+  patient_profile_banner_url: string | null;
   custom_questions: IntakeCustomQuestionResponse[];
   triage_answers: Record<string, string> | null;
   review_note: string | null;
   complement_request_note: string | null;
   activated_patient_id: string | null;
+}
+
+interface IntakePatientSubmitRequestBody {
+  patient_full_name: string;
+  patient_preferred_name?: string;
+  patient_email?: string;
+  patient_phone?: string;
+  patient_birth_date?: string;
+  patient_pronouns?: string;
+  patient_emergency_contact_name?: string;
+  patient_emergency_contact_phone?: string;
+  patient_communication_notes?: string;
+  patient_profile_photo_url?: string;
+  patient_profile_banner_url?: string;
+  consent_terms_accepted: true;
+  consent_privacy_accepted: true;
+}
+
+interface IntakePatientSubmitResponseBody {
+  intake_id: string;
+  status:
+    | "pending_submission"
+    | "submitted"
+    | "complement_requested"
+    | "approved"
+    | "rejected"
+    | "expired";
+  submitted_at: string | null;
 }
 
 interface IntakeReviewRequestBody {
@@ -157,6 +167,16 @@ interface IntakeReviewResponseBody {
   activated_patient_id: string | null;
 }
 
+interface IntakeRotateCodeRequestBody {
+  alias?: string;
+}
+
+interface IntakeRotateCodeResponseBody {
+  intake_id: string;
+  access_code: string;
+  access_code_expires_at: string;
+}
+
 interface TimelineEventResponseBody {
   id: string;
   intake_id: string | null;
@@ -172,25 +192,100 @@ export interface TriageApiClient {
   createInvite: (accessToken: string, payload: IntakeInviteCreatePayload) => Promise<IntakeInviteCreateResult>;
   getQueue: (accessToken: string, statuses?: string[]) => Promise<IntakeQueueItem[]>;
   getIntakeDetail: (accessToken: string, intakeId: string) => Promise<IntakeDetail>;
+  getPatientIntake: (accessToken: string) => Promise<IntakeDetail>;
+  submitPatientIntake: (
+    accessToken: string,
+    payload: IntakePatientSubmitPayload,
+  ) => Promise<IntakePatientSubmitResult>;
   reviewIntake: (
     accessToken: string,
     intakeId: string,
     payload: IntakeReviewPayload,
   ) => Promise<IntakeReviewResult>;
+  rotateAccessCode: (
+    accessToken: string,
+    intakeId: string,
+    payload?: IntakeRotateCodePayload,
+  ) => Promise<IntakeRotateCodeResult>;
   getTimelineEvents: (
     accessToken: string,
     options?: { intakeId?: string; limit?: number },
   ) => Promise<TimelineEvent[]>;
-  getPublicIntake: (inviteToken: string) => Promise<IntakePublicView>;
-  submitPublicIntake: (
-    inviteToken: string,
-    payload: IntakePublicSubmitPayload,
-  ) => Promise<IntakePublicSubmitResult>;
 }
 
 interface CreateTriageApiClientOptions {
   baseUrl?: string;
   fetchImpl?: typeof fetch;
+}
+
+interface ApiValidationItem {
+  msg?: unknown;
+  loc?: unknown;
+}
+
+function stringifyLoc(loc: unknown): string | null {
+  if (!Array.isArray(loc)) {
+    return null;
+  }
+  const tokens = loc
+    .map((chunk) =>
+      typeof chunk === "string" || typeof chunk === "number" ? String(chunk) : null,
+    )
+    .filter((chunk): chunk is string => chunk !== null);
+  return tokens.length > 0 ? tokens.join(".") : null;
+}
+
+function extractDetailMessage(detail: unknown): string | null {
+  if (typeof detail === "string" && detail.trim().length > 0) {
+    return detail.trim();
+  }
+
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((entry) => {
+        if (typeof entry === "string" && entry.trim().length > 0) {
+          return entry.trim();
+        }
+        if (entry && typeof entry === "object") {
+          const validationItem = entry as ApiValidationItem;
+          const message =
+            typeof validationItem.msg === "string" && validationItem.msg.trim().length > 0
+              ? validationItem.msg.trim()
+              : null;
+          const location = stringifyLoc(validationItem.loc);
+          if (message && location) {
+            return `${message} (${location})`;
+          }
+          return message;
+        }
+        return null;
+      })
+      .filter((entry): entry is string => entry !== null);
+
+    if (parts.length > 0) {
+      return parts.join(" | ");
+    }
+    return null;
+  }
+
+  if (detail && typeof detail === "object") {
+    const candidate = detail as Record<string, unknown>;
+    const nested =
+      extractDetailMessage(candidate.message) ??
+      extractDetailMessage(candidate.error) ??
+      extractDetailMessage(candidate.detail) ??
+      extractDetailMessage(candidate.msg);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
+}
+
+function resolveErrorMessage(parsedBody: unknown, fallbackMessage: string): string {
+  const payload = (parsedBody ?? {}) as TriageApiErrorPayload;
+  return extractDetailMessage(payload.detail) ?? fallbackMessage;
 }
 
 async function requestJson<TResponse>(
@@ -208,11 +303,20 @@ async function requestJson<TResponse>(
   });
 
   const rawBody = await response.text();
-  const parsedBody = rawBody.length > 0 ? (JSON.parse(rawBody) as unknown) : null;
+  let parsedBody: unknown = null;
+  if (rawBody.trim().length > 0) {
+    try {
+      parsedBody = JSON.parse(rawBody) as unknown;
+    } catch {
+      parsedBody = { detail: rawBody.trim() };
+    }
+  }
 
   if (!response.ok) {
-    const payload = (parsedBody ?? {}) as TriageApiErrorPayload;
-    throw new TriageApiError(payload.detail ?? "Falha na requisicao de triagem.", response.status);
+    throw new TriageApiError(
+      resolveErrorMessage(parsedBody, "Falha na requisicao de triagem."),
+      response.status,
+    );
   }
 
   return parsedBody as TResponse;
@@ -234,6 +338,9 @@ function mapInviteCreatePayload(payload: IntakeInviteCreatePayload): IntakeInvit
   if (payload.inviteMessage !== undefined) {
     body.invite_message = payload.inviteMessage;
   }
+  if (payload.accessCodeAlias !== undefined) {
+    body.access_code_alias = payload.accessCodeAlias;
+  }
   if (payload.customQuestions !== undefined) {
     body.custom_questions = payload.customQuestions;
   }
@@ -248,46 +355,8 @@ function mapInviteCreateResponse(payload: IntakeInviteCreateResponseBody): Intak
     inviteToken: payload.invite_token,
     inviteLink: payload.invite_link,
     inviteExpiresAt: payload.invite_expires_at,
-  };
-}
-
-function mapPublicView(payload: IntakePublicViewResponseBody): IntakePublicView {
-  return {
-    intakeId: payload.intake_id,
-    mode: payload.mode,
-    status: payload.status,
-    inviteExpiresAt: payload.invite_expires_at,
-    practiceName: payload.practice_name,
-    inviteMessage: payload.invite_message,
-    requiresCustomTriage: payload.requires_custom_triage,
-    customQuestions: payload.custom_questions.map(mapCustomQuestion),
-    complementRequestNote: payload.complement_request_note,
-  };
-}
-
-function mapPublicSubmitPayload(payload: IntakePublicSubmitPayload): IntakePublicSubmitRequestBody {
-  const body: IntakePublicSubmitRequestBody = {
-    patient_full_name: payload.patientFullName,
-    consent_terms_accepted: payload.consentTermsAccepted,
-    consent_privacy_accepted: payload.consentPrivacyAccepted,
-  };
-  if (payload.patientEmail !== undefined) {
-    body.patient_email = payload.patientEmail;
-  }
-  if (payload.patientPhone !== undefined) {
-    body.patient_phone = payload.patientPhone;
-  }
-  if (payload.triageAnswers !== undefined) {
-    body.triage_answers = payload.triageAnswers;
-  }
-  return body;
-}
-
-function mapPublicSubmitResponse(payload: IntakePublicSubmitResponseBody): IntakePublicSubmitResult {
-  return {
-    intakeId: payload.intake_id,
-    status: payload.status,
-    submittedAt: payload.submitted_at,
+    accessCode: payload.access_code,
+    accessCodeExpiresAt: payload.access_code_expires_at,
   };
 }
 
@@ -297,11 +366,19 @@ function mapQueueItem(payload: IntakeQueueItemResponseBody): IntakeQueueItem {
     mode: payload.mode,
     status: payload.status,
     inviteExpiresAt: payload.invite_expires_at,
+    accessCodeExpiresAt: payload.access_code_expires_at,
     openedAt: payload.opened_at,
     submittedAt: payload.submitted_at,
     patientFullName: payload.patient_full_name,
+    patientPreferredName: payload.patient_preferred_name,
     patientEmail: payload.patient_email,
     patientPhone: payload.patient_phone,
+    patientBirthDate: payload.patient_birth_date,
+    patientPronouns: payload.patient_pronouns,
+    patientEmergencyContactName: payload.patient_emergency_contact_name,
+    patientEmergencyContactPhone: payload.patient_emergency_contact_phone,
+    patientProfilePhotoUrl: payload.patient_profile_photo_url,
+    patientProfileBannerUrl: payload.patient_profile_banner_url,
     complementRequestNote: payload.complement_request_note,
     activatedPatientId: payload.activated_patient_id,
     hasTriageAnswers: payload.has_triage_answers,
@@ -314,18 +391,74 @@ function mapIntakeDetail(payload: IntakeDetailResponseBody): IntakeDetail {
     mode: payload.mode,
     status: payload.status,
     inviteExpiresAt: payload.invite_expires_at,
+    accessCodeExpiresAt: payload.access_code_expires_at,
     openedAt: payload.opened_at,
     submittedAt: payload.submitted_at,
     reviewedAt: payload.reviewed_at,
     activatedAt: payload.activated_at,
     patientFullName: payload.patient_full_name,
+    patientPreferredName: payload.patient_preferred_name,
     patientEmail: payload.patient_email,
     patientPhone: payload.patient_phone,
+    patientBirthDate: payload.patient_birth_date,
+    patientPronouns: payload.patient_pronouns,
+    patientEmergencyContactName: payload.patient_emergency_contact_name,
+    patientEmergencyContactPhone: payload.patient_emergency_contact_phone,
+    patientCommunicationNotes: payload.patient_communication_notes,
+    patientProfilePhotoUrl: payload.patient_profile_photo_url,
+    patientProfileBannerUrl: payload.patient_profile_banner_url,
     customQuestions: payload.custom_questions.map(mapCustomQuestion),
     triageAnswers: payload.triage_answers,
     reviewNote: payload.review_note,
     complementRequestNote: payload.complement_request_note,
     activatedPatientId: payload.activated_patient_id,
+  };
+}
+
+function mapPatientSubmitPayload(payload: IntakePatientSubmitPayload): IntakePatientSubmitRequestBody {
+  const body: IntakePatientSubmitRequestBody = {
+    patient_full_name: payload.patientFullName,
+    consent_terms_accepted: payload.consentTermsAccepted,
+    consent_privacy_accepted: payload.consentPrivacyAccepted,
+  };
+  if (payload.patientPreferredName !== undefined) {
+    body.patient_preferred_name = payload.patientPreferredName;
+  }
+  if (payload.patientEmail !== undefined) {
+    body.patient_email = payload.patientEmail;
+  }
+  if (payload.patientPhone !== undefined) {
+    body.patient_phone = payload.patientPhone;
+  }
+  if (payload.patientBirthDate !== undefined) {
+    body.patient_birth_date = payload.patientBirthDate;
+  }
+  if (payload.patientPronouns !== undefined) {
+    body.patient_pronouns = payload.patientPronouns;
+  }
+  if (payload.patientEmergencyContactName !== undefined) {
+    body.patient_emergency_contact_name = payload.patientEmergencyContactName;
+  }
+  if (payload.patientEmergencyContactPhone !== undefined) {
+    body.patient_emergency_contact_phone = payload.patientEmergencyContactPhone;
+  }
+  if (payload.patientCommunicationNotes !== undefined) {
+    body.patient_communication_notes = payload.patientCommunicationNotes;
+  }
+  if (payload.patientProfilePhotoUrl !== undefined) {
+    body.patient_profile_photo_url = payload.patientProfilePhotoUrl;
+  }
+  if (payload.patientProfileBannerUrl !== undefined) {
+    body.patient_profile_banner_url = payload.patientProfileBannerUrl;
+  }
+  return body;
+}
+
+function mapPatientSubmitResponse(payload: IntakePatientSubmitResponseBody): IntakePatientSubmitResult {
+  return {
+    intakeId: payload.intake_id,
+    status: payload.status,
+    submittedAt: payload.submitted_at,
   };
 }
 
@@ -345,6 +478,23 @@ function mapReviewResponse(payload: IntakeReviewResponseBody): IntakeReviewResul
     status: payload.status,
     reviewedAt: payload.reviewed_at,
     activatedPatientId: payload.activated_patient_id,
+  };
+}
+
+function mapRotateCodePayload(payload?: IntakeRotateCodePayload): IntakeRotateCodeRequestBody {
+  if (payload?.alias === undefined) {
+    return {};
+  }
+  return {
+    alias: payload.alias,
+  };
+}
+
+function mapRotateCodeResponse(payload: IntakeRotateCodeResponseBody): IntakeRotateCodeResult {
+  return {
+    intakeId: payload.intake_id,
+    accessCode: payload.access_code,
+    accessCodeExpiresAt: payload.access_code_expires_at,
   };
 }
 
@@ -416,6 +566,37 @@ export function createTriageApiClient(options: CreateTriageApiClientOptions = {}
       return mapIntakeDetail(response);
     },
 
+    async getPatientIntake(accessToken): Promise<IntakeDetail> {
+      const response = await requestJson<IntakeDetailResponseBody>(
+        fetchImpl,
+        baseUrl,
+        "/intakes/patient/me",
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        },
+      );
+      return mapIntakeDetail(response);
+    },
+
+    async submitPatientIntake(accessToken, payload): Promise<IntakePatientSubmitResult> {
+      const response = await requestJson<IntakePatientSubmitResponseBody>(
+        fetchImpl,
+        baseUrl,
+        "/intakes/patient/me/submit",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(mapPatientSubmitPayload(payload)),
+        },
+      );
+      return mapPatientSubmitResponse(response);
+    },
+
     async reviewIntake(accessToken, intakeId, payload): Promise<IntakeReviewResult> {
       const response = await requestJson<IntakeReviewResponseBody>(
         fetchImpl,
@@ -430,6 +611,22 @@ export function createTriageApiClient(options: CreateTriageApiClientOptions = {}
         },
       );
       return mapReviewResponse(response);
+    },
+
+    async rotateAccessCode(accessToken, intakeId, payload): Promise<IntakeRotateCodeResult> {
+      const response = await requestJson<IntakeRotateCodeResponseBody>(
+        fetchImpl,
+        baseUrl,
+        `/intakes/${encodeURIComponent(intakeId)}/access-code/rotate`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(mapRotateCodePayload(payload)),
+        },
+      );
+      return mapRotateCodeResponse(response);
     },
 
     async getTimelineEvents(accessToken, options): Promise<TimelineEvent[]> {
@@ -453,31 +650,6 @@ export function createTriageApiClient(options: CreateTriageApiClientOptions = {}
         },
       );
       return response.map(mapTimelineEvent);
-    },
-
-    async getPublicIntake(inviteToken): Promise<IntakePublicView> {
-      const response = await requestJson<IntakePublicViewResponseBody>(
-        fetchImpl,
-        baseUrl,
-        `/intake-links/${encodeURIComponent(inviteToken)}`,
-        {
-          method: "GET",
-        },
-      );
-      return mapPublicView(response);
-    },
-
-    async submitPublicIntake(inviteToken, payload): Promise<IntakePublicSubmitResult> {
-      const response = await requestJson<IntakePublicSubmitResponseBody>(
-        fetchImpl,
-        baseUrl,
-        `/intake-links/${encodeURIComponent(inviteToken)}/submit`,
-        {
-          method: "POST",
-          body: JSON.stringify(mapPublicSubmitPayload(payload)),
-        },
-      );
-      return mapPublicSubmitResponse(response);
     },
   };
 }

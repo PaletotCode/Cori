@@ -8,11 +8,13 @@ import { ScreenFadeIn } from "../../../shared/ui/ScreenFadeIn";
 export default function PsychologistSessionRoute() {
   const hydrated = useAuthStore((state) => state.hydrated);
   const status = useAuthStore((state) => state.status);
+  const role = useAuthStore((state) => state.role);
   const onboardingCompleted = useAuthStore((state) => state.profile?.onboardingCompleted ?? null);
 
   const redirect = resolvePsychologistSessionRedirect({
     hydrated,
     status,
+    role,
     onboardingCompleted,
   });
 

@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { memo } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { typographyContract } from "../../../../shared/ui/typography";
 
 interface PatientDetailHeroBannerProps {
   fullName: string;
   initials: string;
+  profilePhotoUrl?: string | null;
+  profileBannerUrl?: string | null;
   ageLabel: string;
   birthdayLabel: string;
   phoneLabel: string;
@@ -25,6 +27,8 @@ interface PatientDetailHeroBannerProps {
 export const PatientDetailHeroBanner = memo(function PatientDetailHeroBanner({
   fullName,
   initials,
+  profilePhotoUrl,
+  profileBannerUrl,
   ageLabel,
   birthdayLabel,
   phoneLabel,
@@ -42,7 +46,11 @@ export const PatientDetailHeroBanner = memo(function PatientDetailHeroBanner({
   return (
     <View style={styles.wrapper}>
       <View style={styles.bannerTopMedia}>
-        <View style={styles.mediaPlaceholder} />
+        {profileBannerUrl ? (
+          <Image source={{ uri: profileBannerUrl }} style={styles.mediaCover} resizeMode="cover" />
+        ) : (
+          <View style={styles.mediaPlaceholder} />
+        )}
         <Pressable
           accessibilityRole="button"
           onPress={onBack}
@@ -61,7 +69,11 @@ export const PatientDetailHeroBanner = memo(function PatientDetailHeroBanner({
           style={styles.avatar}
           testID={avatarButtonTestID}
         >
-          <Text style={styles.avatarText}>{initials}</Text>
+          {profilePhotoUrl ? (
+            <Image source={{ uri: profilePhotoUrl }} style={styles.avatarPhoto} resizeMode="cover" />
+          ) : (
+            <Text style={styles.avatarText}>{initials}</Text>
+          )}
         </Pressable>
 
         <Text style={styles.name}>{fullName}</Text>
@@ -148,6 +160,9 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "#DCE7EE",
   },
+  mediaCover: {
+    ...StyleSheet.absoluteFillObject,
+  },
   backButton: {
     alignSelf: "flex-start",
     minHeight: 32,
@@ -185,6 +200,11 @@ const styles = StyleSheet.create({
     marginTop: -48,
     borderWidth: 4,
     borderColor: "#FFFFFF",
+    overflow: "hidden",
+  },
+  avatarPhoto: {
+    width: "100%",
+    height: "100%",
   },
   avatarText: {
     fontFamily: typographyContract.fontFamily,

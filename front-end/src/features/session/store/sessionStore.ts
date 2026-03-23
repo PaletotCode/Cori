@@ -1,15 +1,13 @@
 import { createStore } from "../../../shared/store/createStore";
 
-export type ActiveArea = "psychologist" | "patient" | null;
+export type ActiveArea = "psychologist" | null;
 
 export interface SessionState {
   activeArea: ActiveArea;
-  patientInviteCode: string | null;
 }
 
 const initialSessionState: SessionState = {
   activeArea: null,
-  patientInviteCode: null,
 };
 
 const baseStore = createStore<SessionState>(initialSessionState);
@@ -21,13 +19,6 @@ export const sessionStore = {
       baseStore.setState((previous) => ({
         ...previous,
         activeArea,
-      }));
-    },
-
-    setPatientInviteCode(patientInviteCode: string | null): void {
-      baseStore.setState((previous) => ({
-        ...previous,
-        patientInviteCode,
       }));
     },
 

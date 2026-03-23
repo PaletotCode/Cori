@@ -79,6 +79,25 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _extract_patient_portal_tenant_hint(token: str) -> UUID | None:
+    normalized = token.strip()
+    if not normalized.startswith("pt."):
+        return None
+
+    parts = normalized.split(".", 2)
+    if len(parts) != 3:
+        return None
+
+    tenant_raw = parts[1].strip()
+    if tenant_raw == "":
+        return None
+
+    try:
+        return UUID(tenant_raw)
+    except ValueError:
+        return None
+
+
 def _set_rls_bypass(db: Session) -> None:
     db.execute(text("SELECT set_config('app.rls_bypass', 'on', true)"))
 
@@ -236,8 +255,31 @@ class NotificationService:
         self, db: Session, *, patient_access_token: str
     ) -> tuple[Patient, UUID]:
         _set_rls_bypass(db)
-        token_hash = _hash_token(patient_access_token)
+        normalized_token = patient_access_token.strip()
+        token_hash = _hash_token(normalized_token)
         now = _utcnow()
+        tenant_hint = _extract_patient_portal_tenant_hint(normalized_token)
+
+        patient: Patient | None = None
+        if tenant_hint is not None:
+            _set_current_tenant(db, tenant_id=tenant_hint)
+            patient = db.scalar(
+                select(Patient).where(
+                    Patient.tenant_id == tenant_hint,
+                    Patient.portal_access_token_hash == token_hash,
+                )
+            )
+        if patient is not None:
+            if (
+                patient.portal_access_token_expires_at is None
+                or patient.portal_access_token_expires_at <= now
+            ):
+                raise NotificationServiceError(
+                    status_code=status.HTTP_410_GONE,
+                    detail="Token de acesso do paciente expirado.",
+                )
+            _set_current_tenant(db, tenant_id=patient.tenant_id)
+            return patient, patient.tenant_id
 
         activity = db.scalar(
             select(Activity).where(Activity.patient_access_token_hash == token_hash)

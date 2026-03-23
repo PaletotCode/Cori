@@ -28,7 +28,7 @@ Type: `notification`
 {
   "type": "notification",
   "id": "<notification_delivery_id>",
-  "event_type": "activity_assigned | form_assigned | session_created | ...",
+  "event_type": "activity_assigned | form_assigned | session_created | intake_submitted | intake_approved | intake_rejected | intake_complement_requested | ...",
   "entity_type": "activity | form | session",
   "entity_id": "<domain_entity_id>",
   "patient_id": "<patient_id>",
@@ -37,7 +37,7 @@ Type: `notification`
   "body": "<human_body>",
   "created_at": "<iso8601_utc>",
   "status": "sent | delivered | ...",
-  "category": "activities | forms | sessions | ...",
+  "category": "activities | forms | sessions | triage | ...",
   "metadata": {
     "source_template_id": "<template_id_or_null>",
     "send_mode": "immediate | scheduled",
@@ -45,6 +45,25 @@ Type: `notification`
   }
 }
 ```
+
+## Triage Events (P2)
+
+- `intake_submitted`: paciente enviou triagem e entrou em fila.
+- `intake_approved`: triagem aprovada pelo psicólogo.
+- `intake_rejected`: triagem rejeitada pelo psicólogo.
+- `intake_complement_requested`: psicólogo pediu complemento.
+
+Notes:
+- Triagem usa `category: triage`, `entity_type: intake`, `entity_id: <intake_id>`.
+- Eventos de triagem são enviados para o canal `tenant:<tenant_id>`.
+
+## Access Gate Events (P3)
+
+- `intake_patient_access_granted`: acesso oficial liberado para o paciente apos aprovacao.
+
+Notes:
+- Evento sai com `category: triage`, `entity_type: intake` e `patient_id` preenchido.
+- Roteamento realtime: `tenant:<tenant_id>` e `patient:<patient_id>` para sincronismo entre os dois clientes.
 
 ## Compatibility Notes
 

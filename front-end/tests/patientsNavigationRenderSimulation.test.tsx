@@ -199,6 +199,8 @@ function buildPatients(): PatientListItem[] {
       preferredContactChannel: "whatsapp",
       profileSource: "manual",
       whatsappNumberValid: true,
+      profilePhotoUrl: null,
+      profileBannerUrl: null,
       updatedAt: makeIsoDate(2026, 3, 1 + (index % 20), 10),
     };
   });
@@ -218,6 +220,8 @@ function buildPatientDetail(patientId: string, patientName: string): PatientDeta
     emergencyContactPhone: null,
     preferredContactChannel: "whatsapp",
     communicationNotes: "Perfil de simulacao para stress test de renderizacao.",
+    profilePhotoUrl: null,
+    profileBannerUrl: null,
     profileSource: "manual",
     whatsappNumberValid: true,
     // Inicio antigo para forcar range de sessoes maior no detalhe.

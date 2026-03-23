@@ -31,6 +31,8 @@ interface PatientListItemResponseBody {
   preferred_contact_channel: "whatsapp" | "email" | "phone";
   profile_source: "manual" | "intake";
   whatsapp_number_valid: boolean;
+  profile_photo_url: string | null;
+  profile_banner_url: string | null;
   updated_at: string;
 }
 
@@ -47,6 +49,8 @@ interface PatientDetailResponseBody {
   emergency_contact_phone: string | null;
   preferred_contact_channel: "whatsapp" | "email" | "phone";
   communication_notes: string | null;
+  profile_photo_url: string | null;
+  profile_banner_url: string | null;
   profile_source: "manual" | "intake";
   whatsapp_number_valid: boolean;
   created_at: string;
@@ -64,6 +68,8 @@ interface PatientCreateRequestBody {
   emergency_contact_phone?: string;
   preferred_contact_channel?: "whatsapp" | "email" | "phone";
   communication_notes?: string;
+  profile_photo_url?: string;
+  profile_banner_url?: string;
 }
 
 interface PatientUpdateRequestBody extends PatientCreateRequestBody {
@@ -195,6 +201,8 @@ function mapListItem(payload: PatientListItemResponseBody): PatientListItem {
     preferredContactChannel: payload.preferred_contact_channel,
     profileSource: payload.profile_source,
     whatsappNumberValid: payload.whatsapp_number_valid,
+    profilePhotoUrl: payload.profile_photo_url,
+    profileBannerUrl: payload.profile_banner_url,
     updatedAt: payload.updated_at,
   };
 }
@@ -213,6 +221,8 @@ function mapPatientDetail(payload: PatientDetailResponseBody): PatientDetail {
     emergencyContactPhone: payload.emergency_contact_phone,
     preferredContactChannel: payload.preferred_contact_channel,
     communicationNotes: payload.communication_notes,
+    profilePhotoUrl: payload.profile_photo_url,
+    profileBannerUrl: payload.profile_banner_url,
     profileSource: payload.profile_source,
     whatsappNumberValid: payload.whatsapp_number_valid,
     createdAt: payload.created_at,
@@ -240,6 +250,12 @@ function mapCreatePayload(payload: PatientCreatePayload): PatientCreateRequestBo
   }
   if (payload.communicationNotes !== undefined) {
     body.communication_notes = payload.communicationNotes;
+  }
+  if (payload.profilePhotoUrl !== undefined) {
+    body.profile_photo_url = payload.profilePhotoUrl;
+  }
+  if (payload.profileBannerUrl !== undefined) {
+    body.profile_banner_url = payload.profileBannerUrl;
   }
   return body;
 }

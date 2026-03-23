@@ -3,6 +3,24 @@ export interface LoginRequest {
   password: string;
 }
 
+export type AuthAccessRole = "psychologist" | "patient";
+
+export interface GoogleOAuthExchangeRequest {
+  code: string;
+  tenantId: string;
+  redirectUri: string;
+  role: AuthAccessRole;
+  stateNonce: string;
+  codeVerifier: string;
+  intakeAccessCode?: string;
+}
+
+export interface CompleteOnboardingRequest {
+  displayName: string;
+  clinicalApproach: string;
+  serviceModality: "online" | "presential" | "hybrid";
+}
+
 export interface TokenPairResponse {
   access_token: string;
   refresh_token: string;
@@ -49,5 +67,5 @@ export interface AuthProfile {
 }
 
 export interface AuthApiErrorPayload {
-  detail?: string;
+  detail?: unknown;
 }

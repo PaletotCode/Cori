@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { FlashList, type ListRenderItem } from "@shopify/flash-list";
 import { Ionicons } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import { useFocusEffect } from "@react-navigation/native";
 import { useNavigation } from "expo-router";
 import {
@@ -54,10 +55,23 @@ import type {
   UnifiedTimelineEvent,
 } from "../../notifications/api/types";
 import {
+  naturalizeErrorMessage,
+  publishInAppNotification,
+} from "../../notifications/utils/inAppNotifications";
+import {
   createSessionsApiClient,
   type SessionsApiClient,
 } from "../../sessions/api/sessionsApiClient";
 import type { SessionAgendaItem } from "../../sessions/api/types";
+import {
+  createTriageApiClient,
+  type TriageApiClient,
+} from "../../triage/api/triageApiClient";
+import type {
+  IntakeDetail,
+  IntakeQueueItem,
+  IntakeRotateCodeResult,
+} from "../../triage/api/types";
 import { buildWhatsappShortcut } from "../domain/whatsappShortcut";
 import { createPatientsApiClient, type PatientsApiClient } from "../api/patientsApiClient";
 import type {
@@ -74,6 +88,17 @@ import {
   type PatientWorkspaceFeedItem,
 } from "../components/detail/PatientWorkspaceFeed";
 import { PatientCard } from "../components/PatientCard";
+import { TriagePreviewOverlay } from "../components/triage/TriagePreviewOverlay";
+import {
+  canReviewTriageStatus,
+  formatAccessCodeDisplay,
+  formatTriageAnchorDate,
+  formatTriageStatusLabel,
+  mapQueueItemToIntakeDetail,
+  resolveAccessCodeAlias,
+  resolvePatientInitials,
+  summarizePendingPatient,
+} from "../components/triage/triageHelpers";
 import {
   PatientTimelineFeed,
   type PatientTimelineFeedItem,
@@ -84,10 +109,12 @@ const notificationsApiClient = createNotificationsApiClient();
 const activitiesApiClient = createActivitiesApiClient();
 const formsApiClient = createFormsApiClient();
 const sessionsApiClient = createSessionsApiClient();
+const triageApiClient = createTriageApiClient();
 const PATIENTS_PULL_HINT_SEEN_STORAGE_KEY = "patients.pull_hint_seen.v1";
 
 type PatientsStep = "list" | "detail";
 type IoniconName = ComponentProps<typeof Ionicons>["name"];
+type TriagePanelTab = "codes" | "pending";
 type PatientOverviewCardId =
   | "completed_sessions"
   | "upcoming_sessions"
@@ -115,6 +142,8 @@ interface PsychologistPatientsScreenProps {
   activitiesClient?: ActivitiesApiClient;
   formsClient?: FormsApiClient;
   sessionsClient?: SessionsApiClient;
+  triageClient?: TriageApiClient;
+  initialTriagePanelVisible?: boolean;
 }
 
 const TIMELINE_CATEGORY_FILTERS: TimelineCategoryFilter[] = [
@@ -185,6 +214,13 @@ interface WorkspaceCollections {
   forms: ClinicalFormListItem[];
 }
 
+interface GeneratedAccessCodeSnapshot {
+  intakeId: string;
+  accessCode: string;
+  accessCodeExpiresAt: string;
+  generatedAt: string;
+}
+
 const REQUEST_ABORTED_ERROR_NAME = "PatientsScreenRequestAborted";
 const SESSIONS_FETCH_BATCH_SIZE = 4;
 const PATIENTS_PAGE_SIZE = 40;
@@ -196,6 +232,12 @@ const DETAIL_WORKSPACE_LOAD_DEFER_MS =
     : process.env.NODE_ENV === "test"
       ? 0
       : 230;
+const TRIAGE_PENDING_STATUSES: Array<IntakeQueueItem["status"]> = [
+  "pending_submission",
+  "submitted",
+  "complement_requested",
+];
+const TRIAGE_QUEUE_PAGE_SIZE = 3;
 
 const OVERVIEW_DECK_PREFERENCES = createDefaultKpiDeckPreferences<PatientOverviewCardId>([
   "completed_sessions",
@@ -320,6 +362,72 @@ function summarizePayload(payload: Record<string, unknown>): string {
 function pickNaturalText(value: string | null | undefined, fallback: string): string {
   const normalized = value?.trim() ?? "";
   return normalized.length > 0 ? normalized : fallback;
+}
+
+function resolveTriageStatusIcon(status: IntakeQueueItem["status"]): IoniconName {
+  if (status === "submitted") {
+    return "time-outline";
+  }
+  if (status === "complement_requested") {
+    return "chatbubble-ellipses-outline";
+  }
+  if (status === "pending_submission") {
+    return "mail-outline";
+  }
+  if (status === "approved") {
+    return "checkmark-circle-outline";
+  }
+  if (status === "rejected") {
+    return "close-circle-outline";
+  }
+  return "hourglass-outline";
+}
+
+function resolveTriageStatusPalette(status: IntakeQueueItem["status"]): {
+  textColor: string;
+  borderColor: string;
+  backgroundColor: string;
+} {
+  if (status === "submitted") {
+    return {
+      textColor: "#0F766E",
+      borderColor: "#99F6E4",
+      backgroundColor: "#F0FDFA",
+    };
+  }
+  if (status === "complement_requested") {
+    return {
+      textColor: "#7C2D12",
+      borderColor: "#FED7AA",
+      backgroundColor: "#FFF7ED",
+    };
+  }
+  if (status === "pending_submission") {
+    return {
+      textColor: "#475467",
+      borderColor: "#D0D5DD",
+      backgroundColor: "#F8FAFC",
+    };
+  }
+  if (status === "approved") {
+    return {
+      textColor: "#166534",
+      borderColor: "#BBF7D0",
+      backgroundColor: "#F0FDF4",
+    };
+  }
+  if (status === "rejected") {
+    return {
+      textColor: "#991B1B",
+      borderColor: "#FECACA",
+      backgroundColor: "#FEF2F2",
+    };
+  }
+  return {
+    textColor: "#475467",
+    borderColor: "#D0D5DD",
+    backgroundColor: "#F8FAFC",
+  };
 }
 
 function firstValidDate(...values: Array<string | null | undefined>): string | null {
@@ -554,10 +662,13 @@ export function PsychologistPatientsScreen({
   activitiesClient = activitiesApiClient,
   formsClient = formsApiClient,
   sessionsClient = sessionsApiClient,
+  triageClient = triageApiClient,
+  initialTriagePanelVisible = false,
 }: PsychologistPatientsScreenProps) {
   const navigation = useNavigation();
   const { width: viewportWidth } = useWindowDimensions();
   const accessToken = useAuthStore((state) => state.tokens?.accessToken ?? null);
+  const psychologistFullName = useAuthStore((state) => state.profile?.fullName ?? null);
 
   const [patients, setPatients] = useState<PatientListItem[]>(
     () => patientsScreenCache?.patients ?? [],
@@ -606,6 +717,21 @@ export function PsychologistPatientsScreen({
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const [showPullHint, setShowPullHint] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [triagePanelVisible, setTriagePanelVisible] = useState(initialTriagePanelVisible);
+  const [triagePanelTab, setTriagePanelTab] = useState<TriagePanelTab>("codes");
+  const [triageTabDirection, setTriageTabDirection] = useState<1 | -1>(1);
+  const [triageQueueLoading, setTriageQueueLoading] = useState(false);
+  const [triageQueue, setTriageQueue] = useState<IntakeQueueItem[]>([]);
+  const [triageQueuePage, setTriageQueuePage] = useState(1);
+  const [triageQueueError, setTriageQueueError] = useState<string | null>(null);
+  const [triageCodeActionLoadingIntakeId, setTriageCodeActionLoadingIntakeId] = useState<string | null>(null);
+  const [triageInlineReviewLoadingKey, setTriageInlineReviewLoadingKey] = useState<string | null>(null);
+  const [triagePreviewLoadingIntakeId, setTriagePreviewLoadingIntakeId] = useState<string | null>(null);
+  const [triagePreviewVisible, setTriagePreviewVisible] = useState(false);
+  const [triagePreviewIntake, setTriagePreviewIntake] = useState<IntakeDetail | null>(null);
+  const [triageReviewActionLoading, setTriageReviewActionLoading] = useState<"approve" | "reject" | null>(null);
+  const [latestGeneratedAccessCode, setLatestGeneratedAccessCode] =
+    useState<GeneratedAccessCodeSnapshot | null>(null);
 
   const [avatarModalVisible, setAvatarModalVisible] = useState(false);
 
@@ -638,6 +764,11 @@ export function PsychologistPatientsScreen({
   const detailInteractionRef = useRef<{ cancel: () => void } | null>(null);
   const detailCleanupInteractionRef = useRef<{ cancel: () => void } | null>(null);
   const detailLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const triageTabTransition = useRef(new Animated.Value(1)).current;
+  const wasTriagePanelVisibleRef = useRef(triagePanelVisible);
+  const lastErrorNotificationRef = useRef<string | null>(null);
+  const lastInfoNotificationRef = useRef<string | null>(null);
+  const lastTriageErrorNotificationRef = useRef<string | null>(null);
 
   const runWithTokenRetry = useCallback(
     async <TResult,>(
@@ -684,6 +815,379 @@ export function PsychologistPatientsScreen({
     },
     [accessToken],
   );
+
+  const triageAlias = useMemo(() => resolveAccessCodeAlias(psychologistFullName), [psychologistFullName]);
+  const triagePendingCount = useMemo(() => triageQueue.length, [triageQueue]);
+  const triageQueueTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(triageQueue.length / TRIAGE_QUEUE_PAGE_SIZE)),
+    [triageQueue.length],
+  );
+  const normalizedTriageQueuePage = Math.min(triageQueuePage, triageQueueTotalPages);
+  const pagedTriageQueue = useMemo(() => {
+    const start = (normalizedTriageQueuePage - 1) * TRIAGE_QUEUE_PAGE_SIZE;
+    return triageQueue.slice(start, start + TRIAGE_QUEUE_PAGE_SIZE);
+  }, [normalizedTriageQueuePage, triageQueue]);
+  const triageTabTranslateX = useMemo(
+    () =>
+      triageTabTransition.interpolate({
+        inputRange: [0, 1],
+        outputRange: [triageTabDirection * 18, 0],
+      }),
+    [triageTabDirection, triageTabTransition],
+  );
+
+  const registerGeneratedAccessCode = useCallback(
+    (payload: {
+      intakeId: string;
+      accessCode: string;
+      accessCodeExpiresAt: string;
+    }) => {
+      setLatestGeneratedAccessCode({
+        intakeId: payload.intakeId,
+        accessCode: payload.accessCode,
+        accessCodeExpiresAt: payload.accessCodeExpiresAt,
+        generatedAt: new Date().toISOString(),
+      });
+      setTriagePanelTab("codes");
+      setInfo("Codigo de acesso pronto para compartilhar com o paciente.");
+    },
+    [],
+  );
+
+  const notifyTriageReviewOutcome = useCallback(
+    (action: "approve" | "reject", patientName: string | null | undefined) => {
+      const normalizedPatientName = (patientName ?? "").trim();
+      const firstName =
+        normalizedPatientName.length > 0 ? normalizedPatientName.split(/\s+/)[0] : "Paciente";
+
+      if (action === "approve") {
+        publishInAppNotification({
+          title: "Paciente aprovado!",
+          body: `${firstName} foi aprovado e ja pode seguir para o atendimento oficial.`,
+          variant: "success",
+          eventType: "patient_triage_approved",
+          entityType: "patient_intake",
+        });
+        publishInAppNotification({
+          title: `${firstName} fez seu primeiro acesso!`,
+          body: "A triagem inicial foi concluida e o evento foi registrado na timeline.",
+          variant: "success",
+          eventType: "patient_first_access_confirmed",
+          entityType: "patient_intake",
+        });
+        return;
+      }
+
+      publishInAppNotification({
+        title: "Triagem nao aprovada",
+        body: `${firstName} recebeu orientacao para revisar as informacoes e reenviar a triagem.`,
+        variant: "info",
+        eventType: "patient_triage_rejected",
+        entityType: "patient_intake",
+      });
+    },
+    [],
+  );
+
+  const loadTriageQueue = useCallback(async () => {
+    setTriageQueueLoading(true);
+    setTriageQueueError(null);
+    try {
+      const queue = await runWithTokenRetry((token) =>
+        triageClient.getQueue(token, TRIAGE_PENDING_STATUSES),
+      );
+      startTransition(() => {
+        setTriageQueue(
+          [...queue].sort((left, right) => {
+            const leftAnchor = left.submittedAt ?? left.openedAt ?? left.inviteExpiresAt;
+            const rightAnchor = right.submittedAt ?? right.openedAt ?? right.inviteExpiresAt;
+            return new Date(rightAnchor).getTime() - new Date(leftAnchor).getTime();
+          }),
+        );
+      });
+    } catch (requestError) {
+      if (requestError instanceof Error && isTokenInvalidMessage(requestError)) {
+        setTriageQueueError("Sua sessao expirou. Entre novamente para atualizar as pendencias.");
+      } else {
+        setTriageQueueError("Nao foi possivel carregar as pendencias de triagem agora.");
+      }
+    } finally {
+      setTriageQueueLoading(false);
+    }
+  }, [runWithTokenRetry, triageClient]);
+
+  const handleGenerateAccessCode = useCallback(async () => {
+    setTriageCodeActionLoadingIntakeId("new");
+    setTriageQueueError(null);
+    try {
+      const invite = await runWithTokenRetry((token) =>
+        triageClient.createInvite(token, {
+          mode: "simple_invite",
+          expiresInHours: 72,
+          accessCodeAlias: triageAlias,
+        }),
+      );
+      registerGeneratedAccessCode({
+        intakeId: invite.intakeId,
+        accessCode: invite.accessCode,
+        accessCodeExpiresAt: invite.accessCodeExpiresAt,
+      });
+      await loadTriageQueue();
+    } catch (requestError) {
+      if (requestError instanceof Error && isTokenInvalidMessage(requestError)) {
+        setTriageQueueError("Sua sessao expirou. Entre novamente para gerar novos codigos.");
+      } else {
+        setTriageQueueError("Nao conseguimos gerar o codigo agora. Tente novamente.");
+      }
+    } finally {
+      setTriageCodeActionLoadingIntakeId(null);
+    }
+  }, [loadTriageQueue, registerGeneratedAccessCode, runWithTokenRetry, triageAlias, triageClient]);
+
+  const handleRotateAccessCode = useCallback(
+    async (intakeId: string) => {
+      setTriageCodeActionLoadingIntakeId(intakeId);
+      setTriageQueueError(null);
+      try {
+        const rotated: IntakeRotateCodeResult = await runWithTokenRetry((token) =>
+          triageClient.rotateAccessCode(token, intakeId, {
+            alias: triageAlias,
+          }),
+        );
+        registerGeneratedAccessCode({
+          intakeId: rotated.intakeId,
+          accessCode: rotated.accessCode,
+          accessCodeExpiresAt: rotated.accessCodeExpiresAt,
+        });
+        await loadTriageQueue();
+      } catch (requestError) {
+        if (requestError instanceof Error && isTokenInvalidMessage(requestError)) {
+          setTriageQueueError("Sua sessao expirou. Entre novamente para renovar codigos.");
+        } else {
+          setTriageQueueError("Nao conseguimos renovar o codigo agora. Tente novamente.");
+        }
+      } finally {
+        setTriageCodeActionLoadingIntakeId(null);
+      }
+    },
+    [loadTriageQueue, registerGeneratedAccessCode, runWithTokenRetry, triageAlias, triageClient],
+  );
+
+  const handleCopyLatestAccessCode = useCallback(async () => {
+    if (latestGeneratedAccessCode === null) {
+      setTriageQueueError("Gere ou renove um codigo antes de copiar.");
+      return;
+    }
+    try {
+      await Clipboard.setStringAsync(latestGeneratedAccessCode.accessCode);
+      setInfo("Codigo copiado. Compartilhe com o paciente em seu canal preferido.");
+    } catch {
+      setTriageQueueError("Nao foi possivel copiar o codigo automaticamente.");
+    }
+  }, [latestGeneratedAccessCode]);
+
+  const handleOpenTriagePreview = useCallback(
+    async (item: IntakeQueueItem) => {
+      setTriagePreviewLoadingIntakeId(item.intakeId);
+      setTriageQueueError(null);
+      // Exibe imediatamente a prévia com dados da fila para evitar sensação de clique vazio.
+      setTriagePreviewIntake(mapQueueItemToIntakeDetail(item));
+      setTriagePreviewVisible(true);
+      try {
+        const detail = await runWithTokenRetry((token) =>
+          triageClient.getIntakeDetail(token, item.intakeId),
+        );
+        setTriagePreviewIntake(detail);
+      } catch (requestError) {
+        if (requestError instanceof Error && isTokenInvalidMessage(requestError)) {
+          setTriageQueueError("Sua sessao expirou. Entre novamente para revisar a triagem.");
+        } else {
+          setTriageQueueError(
+            "Nao foi possivel carregar todos os detalhes agora. Voce ainda pode aprovar ou recusar.",
+          );
+        }
+      } finally {
+        setTriagePreviewLoadingIntakeId(null);
+      }
+    },
+    [runWithTokenRetry, triageClient],
+  );
+
+  const handleCloseTriagePreview = useCallback(() => {
+    setTriagePreviewVisible(false);
+    setTriagePreviewIntake(null);
+    setTriageReviewActionLoading(null);
+  }, []);
+
+  const handleReviewPendingIntake = useCallback(
+    async (action: "approve" | "reject") => {
+      if (triagePreviewIntake === null) {
+        return;
+      }
+
+      const canReview = canReviewTriageStatus(triagePreviewIntake.status);
+      if (!canReview) {
+        setTriageQueueError("A triagem ainda nao foi enviada. Aguarde o paciente concluir o envio.");
+        return;
+      }
+
+      setTriageReviewActionLoading(action);
+      setTriageQueueError(null);
+      try {
+        await runWithTokenRetry((token) =>
+          triageClient.reviewIntake(token, triagePreviewIntake.intakeId, {
+            action,
+            note:
+              action === "reject"
+                ? "Triagem nao aprovada neste momento. Oriente o paciente para nova avaliacao."
+                : undefined,
+          }),
+        );
+        notifyTriageReviewOutcome(action, triagePreviewIntake.patientFullName);
+        await loadTriageQueue();
+        setTriagePreviewVisible(false);
+        setTriagePreviewIntake(null);
+      } catch (requestError) {
+        if (requestError instanceof Error && isTokenInvalidMessage(requestError)) {
+          setTriageQueueError("Sua sessao expirou. Entre novamente para revisar as triagens.");
+        } else {
+          setTriageQueueError(
+            "Nao foi possivel concluir a revisao agora. Tente novamente em alguns segundos.",
+          );
+        }
+      } finally {
+        setTriageReviewActionLoading(null);
+      }
+    },
+    [loadTriageQueue, notifyTriageReviewOutcome, runWithTokenRetry, triageClient, triagePreviewIntake],
+  );
+
+  const handleQuickReviewPendingIntake = useCallback(
+    async (item: IntakeQueueItem, action: "approve" | "reject") => {
+      if (!canReviewTriageStatus(item.status)) {
+        setTriageQueueError("A triagem ainda nao foi enviada. Aguarde o paciente concluir o envio.");
+        return;
+      }
+
+      const loadingKey = `${action}:${item.intakeId}`;
+      setTriageInlineReviewLoadingKey(loadingKey);
+      setTriageQueueError(null);
+      try {
+        await runWithTokenRetry((token) =>
+          triageClient.reviewIntake(token, item.intakeId, {
+            action,
+            note:
+              action === "reject"
+                ? "Triagem nao aprovada neste momento. Oriente o paciente para nova avaliacao."
+                : undefined,
+          }),
+        );
+        notifyTriageReviewOutcome(action, item.patientFullName);
+        if (triagePreviewIntake?.intakeId === item.intakeId) {
+          setTriagePreviewVisible(false);
+          setTriagePreviewIntake(null);
+          setTriageReviewActionLoading(null);
+        }
+        await loadTriageQueue();
+      } catch (requestError) {
+        if (requestError instanceof Error && isTokenInvalidMessage(requestError)) {
+          setTriageQueueError("Sua sessao expirou. Entre novamente para revisar as triagens.");
+        } else {
+          setTriageQueueError(
+            "Nao foi possivel concluir a revisao agora. Tente novamente em alguns segundos.",
+          );
+        }
+      } finally {
+        setTriageInlineReviewLoadingKey(null);
+      }
+    },
+    [loadTriageQueue, notifyTriageReviewOutcome, runWithTokenRetry, triageClient, triagePreviewIntake],
+  );
+
+  const handleSelectTriagePanelTab = useCallback(
+    (nextTab: TriagePanelTab) => {
+      if (nextTab === triagePanelTab) {
+        return;
+      }
+
+      setTriageTabDirection(nextTab === "pending" ? 1 : -1);
+      triageTabTransition.stopAnimation();
+      Animated.timing(triageTabTransition, {
+        toValue: 0,
+        duration: 120,
+        useNativeDriver: true,
+      }).start(({ finished }) => {
+        if (!finished) {
+          return;
+        }
+        setTriagePanelTab(nextTab);
+        if (nextTab === "pending") {
+          void loadTriageQueue();
+        }
+        triageTabTransition.setValue(0);
+        Animated.timing(triageTabTransition, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }).start();
+      });
+    },
+    [loadTriageQueue, triagePanelTab, triageTabTransition],
+  );
+
+  useEffect(() => {
+    if (error === null) {
+      lastErrorNotificationRef.current = null;
+      return;
+    }
+    if (lastErrorNotificationRef.current === error) {
+      return;
+    }
+    lastErrorNotificationRef.current = error;
+    publishInAppNotification({
+      title: "Nao foi possivel concluir a acao",
+      body: naturalizeErrorMessage(error),
+      variant: "error",
+      eventType: "ui_patients_error",
+      entityType: "patients_screen",
+    });
+  }, [error]);
+
+  useEffect(() => {
+    if (info === null) {
+      lastInfoNotificationRef.current = null;
+      return;
+    }
+    if (lastInfoNotificationRef.current === info) {
+      return;
+    }
+    lastInfoNotificationRef.current = info;
+    publishInAppNotification({
+      title: "Informacao",
+      body: info,
+      variant: "info",
+      eventType: "ui_patients_info",
+      entityType: "patients_screen",
+    });
+  }, [info]);
+
+  useEffect(() => {
+    if (triageQueueError === null) {
+      lastTriageErrorNotificationRef.current = null;
+      return;
+    }
+    if (lastTriageErrorNotificationRef.current === triageQueueError) {
+      return;
+    }
+    lastTriageErrorNotificationRef.current = triageQueueError;
+    publishInAppNotification({
+      title: "Nao foi possivel processar a triagem",
+      body: naturalizeErrorMessage(triageQueueError),
+      variant: "error",
+      eventType: "ui_triage_error",
+      entityType: "patients_triage_panel",
+    });
+  }, [triageQueueError]);
 
   useEffect(() => {
     hasLoadedListRef.current = hasLoadedList;
@@ -1207,6 +1711,51 @@ export function PsychologistPatientsScreen({
     }
   }, [hasLoadedList, loadPatients]);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (step !== "list") {
+        return undefined;
+      }
+      void loadTriageQueue();
+      return undefined;
+    }, [loadTriageQueue, step]),
+  );
+
+  useEffect(() => {
+    if (!triagePanelVisible || step !== "list") {
+      return;
+    }
+    void loadTriageQueue();
+  }, [loadTriageQueue, step, triagePanelVisible]);
+
+  useEffect(() => {
+    if (triageQueuePage !== normalizedTriageQueuePage) {
+      setTriageQueuePage(normalizedTriageQueuePage);
+    }
+  }, [normalizedTriageQueuePage, triageQueuePage]);
+
+  useEffect(() => {
+    if (!triagePanelVisible) {
+      return;
+    }
+    setTriagePanelTab("codes");
+    setTriageQueuePage(1);
+    setTriageTabDirection(1);
+    triageTabTransition.setValue(1);
+  }, [triagePanelVisible, triageTabTransition]);
+
+  useEffect(() => {
+    const wasOpen = wasTriagePanelVisibleRef.current;
+    wasTriagePanelVisibleRef.current = triagePanelVisible;
+    if (!wasOpen || triagePanelVisible) {
+      return;
+    }
+    setTriagePreviewVisible(false);
+    setTriagePreviewIntake(null);
+    setTriageReviewActionLoading(null);
+    setTriagePreviewLoadingIntakeId(null);
+  }, [triagePanelVisible]);
+
   useEffect(() => {
     patientsScreenCache = {
       patients,
@@ -1216,8 +1765,8 @@ export function PsychologistPatientsScreen({
   }, [hasLoadedList, patientDetailsById, patients]);
 
   const headerSearchWidth = useMemo(() => {
-    const relative = Math.round(viewportWidth * 0.45);
-    return Math.min(264, Math.max(184, relative));
+    const relative = Math.round(viewportWidth * 0.37);
+    return Math.min(228, Math.max(154, relative));
   }, [viewportWidth]);
 
   useLayoutEffect(() => {
@@ -1225,26 +1774,51 @@ export function PsychologistPatientsScreen({
       headerRight:
         step === "list"
           ? () => (
-              <View style={[styles.headerSearchWrap, { width: headerSearchWidth }]}>
-                <Ionicons name="search-outline" size={14} color="#64748B" />
-                <TextInput
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  onFocus={() => setSearchFocused(true)}
-                  onBlur={() => setSearchFocused(false)}
-                  placeholder={searchFocused ? "" : "Buscar contatos"}
-                  placeholderTextColor="#94A3B8"
-                  style={styles.headerSearchInput}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  clearButtonMode="while-editing"
-                  testID="patients-global-search"
-                />
+              <View style={styles.headerRightRow}>
+                <View style={[styles.headerSearchWrap, { width: headerSearchWidth }]}>
+                  <Ionicons name="search-outline" size={14} color="#64748B" />
+                  <TextInput
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    onFocus={() => setSearchFocused(true)}
+                    onBlur={() => setSearchFocused(false)}
+                    placeholder={searchFocused ? "" : "Buscar contatos"}
+                    placeholderTextColor="#94A3B8"
+                    style={styles.headerSearchInput}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    clearButtonMode="while-editing"
+                    testID="patients-global-search"
+                  />
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Pendencias de triagem"
+                  onPress={() => setTriagePanelVisible(true)}
+                  style={styles.headerInboxButton}
+                  testID="patients-triage-inbox-button"
+                >
+                  <Ionicons name="mail-outline" size={18} color="#0F766E" />
+                  {triagePendingCount > 0 ? (
+                    <View style={styles.headerInboxBadge}>
+                      <Text style={styles.headerInboxBadgeText}>
+                        {triagePendingCount > 99 ? "99+" : String(triagePendingCount)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
               </View>
             )
           : undefined,
     });
-  }, [headerSearchWidth, navigation, searchFocused, searchQuery, step]);
+  }, [
+    headerSearchWidth,
+    navigation,
+    searchFocused,
+    searchQuery,
+    step,
+    triagePendingCount,
+  ]);
 
   // 🚀 PERFORMANCE: índice de busca pré-processado evita recomputar blob textual completo a cada digitação.
   const patientSearchIndexById = useMemo(() => {
@@ -2048,8 +2622,6 @@ export function PsychologistPatientsScreen({
               contentContainerStyle={styles.cardsListVirtualizedContent}
             />
           </Animated.View>
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-          {info ? <Text style={styles.infoText}>{info}</Text> : null}
         </Animated.View>
       ) : (
         <ScrollView
@@ -2113,6 +2685,8 @@ export function PsychologistPatientsScreen({
                   <PatientDetailHeroBanner
                     fullName={detailPatient.fullName}
                     initials={detailInitials}
+                    profilePhotoUrl={detailPatient.profilePhotoUrl}
+                    profileBannerUrl={detailPatient.profileBannerUrl}
                     ageLabel={resolveAgeLabel(detailPatient).replace("Idade: ", "")}
                     birthdayLabel={resolveBirthdayCountdownLabel(detailPatient).replace("Proximo aniversario ", "")}
                     phoneLabel={detailPhoneActionLabel}
@@ -2274,10 +2848,348 @@ export function PsychologistPatientsScreen({
             </Animated.View>
           </Animated.View>
 
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-          {info ? <Text style={styles.infoText}>{info}</Text> : null}
         </ScrollView>
       )}
+
+      <Modal
+        visible={triagePanelVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTriagePanelVisible(false)}
+      >
+        <View style={styles.triageModalOverlay}>
+          <Pressable
+            style={styles.triageModalBackdrop}
+            onPress={() => setTriagePanelVisible(false)}
+          />
+          <View style={styles.triageModalCard}>
+            <View style={styles.triageModalHeader}>
+              <View style={styles.triageModalTitleWrap}>
+                <Text style={styles.triageModalTitle}>Convites e codigos de acesso</Text>
+                <Text style={styles.triageModalSubtitle}>
+                  Compartilhe codigos e acompanhe novas triagens em um unico lugar.
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setTriagePanelVisible(false)}
+                style={styles.triageModalCloseButton}
+              >
+                <Ionicons name="close" size={18} color="#344054" />
+              </Pressable>
+            </View>
+
+            <View style={styles.triageTabRow}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => handleSelectTriagePanelTab("codes")}
+                style={[
+                  styles.triageTabButton,
+                  triagePanelTab === "codes" ? styles.triageTabButtonActive : null,
+                ]}
+                testID="triage-tab-codes"
+              >
+                <Text
+                  style={[
+                    styles.triageTabButtonText,
+                    triagePanelTab === "codes" ? styles.triageTabButtonTextActive : null,
+                  ]}
+                >
+                  Codigos
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => handleSelectTriagePanelTab("pending")}
+                style={[
+                  styles.triageTabButton,
+                  triagePanelTab === "pending" ? styles.triageTabButtonActive : null,
+                ]}
+                testID="triage-tab-pending"
+              >
+                <Text
+                  style={[
+                    styles.triageTabButtonText,
+                    triagePanelTab === "pending" ? styles.triageTabButtonTextActive : null,
+                  ]}
+                >
+                  Pendencias
+                </Text>
+                {triagePendingCount > 0 ? (
+                  <View style={styles.triageTabBadge}>
+                    <Text style={styles.triageTabBadgeText}>
+                      {triagePendingCount > 99 ? "99+" : String(triagePendingCount)}
+                    </Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
+
+            <Animated.View
+              style={[
+                styles.triageTabContentFrame,
+                {
+                  opacity: triageTabTransition,
+                  transform: [{ translateX: triageTabTranslateX }],
+                },
+              ]}
+            >
+              {triagePanelTab === "codes" ? (
+                <View style={styles.triageCodeCard}>
+                  <Text style={styles.triageCodeLabel}>Codigo de acesso ativo</Text>
+                  {latestGeneratedAccessCode !== null ? (
+                    <>
+                      <Text style={styles.triageCodeValue}>
+                        {formatAccessCodeDisplay(latestGeneratedAccessCode.accessCode)}
+                      </Text>
+                      <Text style={styles.triageCodeMeta}>
+                        Valido ate{" "}
+                        {new Date(latestGeneratedAccessCode.accessCodeExpiresAt).toLocaleString("pt-BR")}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.triageCodeEmptyText}>
+                      Gere um codigo para compartilhar com o paciente e iniciar o primeiro acesso.
+                    </Text>
+                  )}
+                  <Text style={styles.triageCodeHint}>
+                    Compartilhe apenas com o paciente correto para manter a triagem segura.
+                  </Text>
+                  <View style={styles.triageCodeActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => void handleGenerateAccessCode()}
+                      style={[
+                        styles.triagePrimaryButton,
+                        triageCodeActionLoadingIntakeId === "new"
+                          ? styles.triageButtonDisabled
+                          : null,
+                      ]}
+                      disabled={triageCodeActionLoadingIntakeId === "new"}
+                    >
+                      <Text style={styles.triagePrimaryButtonText}>
+                        {triageCodeActionLoadingIntakeId === "new"
+                          ? "Gerando..."
+                          : "Gerar novo codigo"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => void handleCopyLatestAccessCode()}
+                      style={[
+                        styles.triageSecondaryButton,
+                        latestGeneratedAccessCode === null ? styles.triageButtonDisabled : null,
+                      ]}
+                      disabled={latestGeneratedAccessCode === null}
+                    >
+                      <Text style={styles.triageSecondaryButtonText}>Copiar codigo</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.triageSectionTitle}>Pendencias de triagem</Text>
+                  {triageQueueLoading ? (
+                    <View style={styles.triageLoadingRow}>
+                      <ActivityIndicator size="small" color="#0F766E" />
+                      <Text style={styles.triageLoadingText}>Atualizando pendencias...</Text>
+                    </View>
+                  ) : triageQueue.length === 0 ? (
+                    <View style={styles.triageEmptyState}>
+                      <Text style={styles.triageEmptyStateTitle}>Sem pendencias no momento</Text>
+                      <Text style={styles.triageEmptyStateText}>
+                        Quando novos pacientes iniciarem a triagem, eles aparecerao aqui.
+                      </Text>
+                    </View>
+                  ) : (
+                    <>
+                      <ScrollView
+                        style={styles.triageQueueList}
+                        contentContainerStyle={styles.triageQueueContent}
+                        showsVerticalScrollIndicator={false}
+                      >
+                        {pagedTriageQueue.map((item) => {
+                          const isRotatingCode = triageCodeActionLoadingIntakeId === item.intakeId;
+                          const isPreviewLoading = triagePreviewLoadingIntakeId === item.intakeId;
+                          const statusPalette = resolveTriageStatusPalette(item.status);
+                          const statusIcon = resolveTriageStatusIcon(item.status);
+                          const anchorLabel = formatTriageAnchorDate(item);
+                          const canReview = canReviewTriageStatus(item.status);
+                          const approveLoading =
+                            triageInlineReviewLoadingKey === `approve:${item.intakeId}`;
+                          const rejectLoading =
+                            triageInlineReviewLoadingKey === `reject:${item.intakeId}`;
+                          const hasInlineActionLoading = approveLoading || rejectLoading;
+                          return (
+                            <View key={item.intakeId} style={styles.triagePendingCard}>
+                              <View style={styles.triagePendingAvatar}>
+                                <Text style={styles.triagePendingAvatarText}>
+                                  {resolvePatientInitials(item.patientFullName)}
+                                </Text>
+                              </View>
+                              <View style={styles.triagePendingBody}>
+                                <View style={styles.triagePendingHeader}>
+                                  <Text style={styles.triagePendingName}>
+                                    {item.patientFullName ?? "Paciente em cadastro inicial"}
+                                  </Text>
+                                  <View
+                                    style={[
+                                      styles.triagePendingStatusBadge,
+                                      {
+                                        borderColor: statusPalette.borderColor,
+                                        backgroundColor: statusPalette.backgroundColor,
+                                      },
+                                    ]}
+                                  >
+                                    <Ionicons
+                                      name={statusIcon}
+                                      size={12}
+                                      color={statusPalette.textColor}
+                                    />
+                                    <Text
+                                      style={[
+                                        styles.triagePendingStatusText,
+                                        { color: statusPalette.textColor },
+                                      ]}
+                                    >
+                                      {formatTriageStatusLabel(item.status)}
+                                    </Text>
+                                  </View>
+                                </View>
+                                <Text style={styles.triagePendingSummary}>
+                                  {summarizePendingPatient(item)}
+                                </Text>
+                                {anchorLabel ? (
+                                  <Text style={styles.triagePendingMeta}>{anchorLabel}</Text>
+                                ) : null}
+                                <View style={styles.triagePendingActions}>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    onPress={() => void handleQuickReviewPendingIntake(item, "approve")}
+                                    style={[
+                                      styles.triageQueueItemButton,
+                                      styles.triageQueueDecisionButton,
+                                      styles.triageQueueApproveButton,
+                                      !canReview || hasInlineActionLoading || isPreviewLoading
+                                        ? styles.triageButtonDisabled
+                                        : null,
+                                    ]}
+                                    disabled={!canReview || hasInlineActionLoading || isPreviewLoading}
+                                    testID={`triage-pending-approve-${item.intakeId}`}
+                                  >
+                                    <Text style={styles.triageQueueDecisionButtonText} numberOfLines={1}>
+                                      {approveLoading ? "Aprov..." : "Aprovar"}
+                                    </Text>
+                                  </Pressable>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    onPress={() => void handleQuickReviewPendingIntake(item, "reject")}
+                                    style={[
+                                      styles.triageQueueItemButton,
+                                      styles.triageQueueDecisionButton,
+                                      styles.triageQueueRejectButton,
+                                      !canReview || hasInlineActionLoading || isPreviewLoading
+                                        ? styles.triageButtonDisabled
+                                        : null,
+                                    ]}
+                                    disabled={!canReview || hasInlineActionLoading || isPreviewLoading}
+                                    testID={`triage-pending-reject-${item.intakeId}`}
+                                  >
+                                    <Text style={styles.triageQueueDecisionButtonText} numberOfLines={1}>
+                                      {rejectLoading ? "Recus..." : "Recusar"}
+                                    </Text>
+                                  </Pressable>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    onPress={() => void handleOpenTriagePreview(item)}
+                                    style={[
+                                      styles.triageQueueItemButton,
+                                      styles.triageQueueReviewButton,
+                                      isPreviewLoading ? styles.triageButtonDisabled : null,
+                                    ]}
+                                    disabled={isPreviewLoading}
+                                    testID={`triage-pending-review-${item.intakeId}`}
+                                  >
+                                    <Text style={styles.triageQueueItemButtonText} numberOfLines={1}>
+                                      {isPreviewLoading ? "Abrindo..." : canReview ? "Revisar" : "Previa"}
+                                    </Text>
+                                  </Pressable>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    onPress={() => void handleRotateAccessCode(item.intakeId)}
+                                    style={[
+                                      styles.triageQueueItemButton,
+                                      styles.triageQueueDecisionButton,
+                                      isRotatingCode ? styles.triageButtonDisabled : null,
+                                      styles.triageQueueItemButtonMuted,
+                                    ]}
+                                    disabled={isRotatingCode || hasInlineActionLoading}
+                                  >
+                                    <Text style={styles.triageQueueItemButtonText} numberOfLines={1}>
+                                      {isRotatingCode ? "Renov..." : "Renovar"}
+                                    </Text>
+                                  </Pressable>
+                                </View>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </ScrollView>
+
+                      {triageQueue.length > TRIAGE_QUEUE_PAGE_SIZE ? (
+                        <View style={styles.triagePaginationRow}>
+                          <Pressable
+                            accessibilityRole="button"
+                            onPress={() =>
+                              setTriageQueuePage((current) => Math.max(1, current - 1))
+                            }
+                            style={[
+                              styles.triagePaginationButton,
+                              normalizedTriageQueuePage <= 1 ? styles.triageButtonDisabled : null,
+                            ]}
+                            disabled={normalizedTriageQueuePage <= 1}
+                          >
+                            <Text style={styles.triagePaginationButtonText}>Anterior</Text>
+                          </Pressable>
+                          <Text style={styles.triagePaginationLabel}>
+                            Pagina {normalizedTriageQueuePage} de {triageQueueTotalPages}
+                          </Text>
+                          <Pressable
+                            accessibilityRole="button"
+                            onPress={() =>
+                              setTriageQueuePage((current) =>
+                                Math.min(triageQueueTotalPages, current + 1),
+                              )
+                            }
+                            style={[
+                              styles.triagePaginationButton,
+                              normalizedTriageQueuePage >= triageQueueTotalPages
+                                ? styles.triageButtonDisabled
+                                : null,
+                            ]}
+                            disabled={normalizedTriageQueuePage >= triageQueueTotalPages}
+                          >
+                            <Text style={styles.triagePaginationButtonText}>Proxima</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </>
+                  )}
+                </>
+              )}
+            </Animated.View>
+
+            <TriagePreviewOverlay
+              visible={triagePreviewVisible}
+              intake={triagePreviewIntake}
+              reviewActionLoading={triageReviewActionLoading}
+              onClose={handleCloseTriagePreview}
+              onApprove={() => void handleReviewPendingIntake("approve")}
+              onReject={() => void handleReviewPendingIntake("reject")}
+            />
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={avatarModalVisible}
@@ -2306,6 +3218,7 @@ export function PsychologistPatientsScreen({
           </View>
         </View>
       </Modal>
+
     </View>
   );
 }
@@ -2334,6 +3247,12 @@ const styles = StyleSheet.create({
   screenWrap: {
     gap: 12,
   },
+  headerRightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginRight: 2,
+  },
   headerSearchWrap: {
     minHeight: 34,
     borderRadius: 999,
@@ -2344,7 +3263,35 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     paddingHorizontal: 10,
-    marginRight: 2,
+  },
+  headerInboxButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerInboxBadge: {
+    position: "absolute",
+    top: -5,
+    right: -5,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 999,
+    backgroundColor: "#DC2626",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  headerInboxBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 9,
+    lineHeight: 11,
+    fontFamily: typographyContract.fontFamily,
+    fontWeight: typographyContract.fontWeight,
   },
   headerSearchInput: {
     flex: 1,
@@ -2564,18 +3511,455 @@ const styles = StyleSheet.create({
     fontFamily: typographyContract.fontFamily,
     fontWeight: typographyContract.fontWeight,
   },
-  errorText: {
-    marginTop: 2,
+  triageModalOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(15, 23, 42, 0.34)",
+    paddingHorizontal: 12,
+  },
+  triageModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  triageModalCard: {
+    width: "100%",
+    maxWidth: 520,
+    maxHeight: "88%",
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#E4E7EC",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 12,
+  },
+  triageModalHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  triageModalTitleWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  triageModalTitle: {
     fontFamily: typographyContract.fontFamily,
-    color: "#B42318",
+    color: "#101828",
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageModalSubtitle: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#667085",
     fontSize: 12,
     lineHeight: 16,
     fontWeight: typographyContract.fontWeight,
   },
-  infoText: {
-    marginTop: 2,
+  triageModalCloseButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  triageTabRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  triageTabButton: {
+    flex: 1,
+    minHeight: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+    paddingHorizontal: 10,
+  },
+  triageTabButtonActive: {
+    borderColor: "#99F6E4",
+    backgroundColor: "#ECFDF3",
+  },
+  triageTabButtonText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#475467",
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageTabButtonTextActive: {
+    color: "#0F766E",
+  },
+  triageTabBadge: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 999,
+    paddingHorizontal: 4,
+    backgroundColor: "#DC2626",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  triageTabBadgeText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#FFFFFF",
+    fontSize: 9,
+    lineHeight: 11,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageTabContentFrame: {
+    minHeight: 356,
+    maxHeight: 356,
+    gap: 10,
+  },
+  triageCodeCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#F8FAFC",
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  triageCodeLabel: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#344054",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageCodeValue: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#0F172A",
+    fontSize: 21,
+    lineHeight: 26,
+    letterSpacing: 1.1,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageCodeMeta: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#667085",
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageCodeEmptyText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#667085",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageCodeHint: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#475467",
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageCodeActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  triagePrimaryButton: {
+    flex: 1,
+    minHeight: 34,
+    borderRadius: 10,
+    backgroundColor: "#0F766E",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  triagePrimaryButtonText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#FFFFFF",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageSecondaryButton: {
+    minHeight: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  triageSecondaryButtonText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#344054",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageButtonDisabled: {
+    opacity: 0.55,
+  },
+  triageSectionTitle: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#101828",
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageLoadingRow: {
+    minHeight: 60,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E4E7EC",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+  },
+  triageLoadingText: {
     fontFamily: typographyContract.fontFamily,
     color: "#0F766E",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageEmptyState: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E4E7EC",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  triageEmptyStateTitle: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#101828",
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageEmptyStateText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#667085",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageQueueList: {
+    flex: 1,
+    minHeight: 0,
+  },
+  triageQueueContent: {
+    gap: 8,
+    paddingBottom: 4,
+  },
+  triagePendingCard: {
+    flexDirection: "row",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#FFFFFF",
+    padding: 12,
+    gap: 10,
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.04,
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 1,
+  },
+  triagePendingAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  triagePendingAvatarText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#1D4ED8",
+    fontSize: 12.5,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triagePendingBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 5,
+  },
+  triagePendingHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  triagePendingName: {
+    flex: 1,
+    minWidth: 0,
+    fontFamily: typographyContract.fontFamily,
+    color: "#0F172A",
+    fontSize: 13.5,
+    lineHeight: 18,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triagePendingStatusBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    minHeight: 22,
+    paddingHorizontal: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  triagePendingStatusText: {
+    fontFamily: typographyContract.fontFamily,
+    fontSize: 10.5,
+    lineHeight: 14,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triagePendingSummary: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#334155",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triagePendingMeta: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#667085",
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triagePendingActions: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+  },
+  triageQueueItem: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E4E7EC",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  triageQueueItemHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  triageQueueItemTitle: {
+    flex: 1,
+    fontFamily: typographyContract.fontFamily,
+    color: "#101828",
+    fontSize: 12.5,
+    lineHeight: 17,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageQueueItemStatus: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#0F766E",
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageQueueItemMeta: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#667085",
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageQueueItemButton: {
+    flex: 1,
+    minHeight: 34,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 8,
+  },
+  triageQueueDecisionButton: {
+    minWidth: 0,
+  },
+  triageQueueApproveButton: {
+    borderColor: "#14B8A6",
+    backgroundColor: "#0F766E",
+  },
+  triageQueueRejectButton: {
+    borderColor: "#FCA5A5",
+    backgroundColor: "#B42318",
+  },
+  triageQueueReviewButton: {
+    backgroundColor: "#F8FAFC",
+  },
+  triageQueueDecisionButtonText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#FFFFFF",
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triageQueueItemButtonMuted: {
+    backgroundColor: "#F8FAFC",
+  },
+  triageQueueItemButtonText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#344054",
+    fontSize: 10.5,
+    lineHeight: 15,
+    fontWeight: typographyContract.fontWeight,
+    textAlign: "center",
+  },
+  triagePaginationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  triagePaginationButton: {
+    minHeight: 30,
+    minWidth: 86,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D0D5DD",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  triagePaginationButtonText: {
+    fontFamily: typographyContract.fontFamily,
+    color: "#344054",
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: typographyContract.fontWeight,
+  },
+  triagePaginationLabel: {
+    flex: 1,
+    textAlign: "center",
+    fontFamily: typographyContract.fontFamily,
+    color: "#667085",
     fontSize: 12,
     lineHeight: 16,
     fontWeight: typographyContract.fontWeight,
