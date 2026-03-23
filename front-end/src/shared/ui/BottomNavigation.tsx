@@ -87,7 +87,7 @@ export function BottomTabIcon({ focused, icons, badgeCount }: BottomTabIconProps
           },
         ]}
       >
-        <Ionicons name={icons.outline} size={bottomTabContract.iconSize} color={appColors.text} />
+        <Ionicons name={icons.outline} size={bottomTabContract.iconSize} color="#E2E8F0" />
       </Animated.View>
 
       <Animated.View
@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
   },
   // Regra 4: estado inativo com menor opacidade, mantendo contraste de leitura.
   labelInactive: {
-    color: appColors.text,
+    color: "#E2E8F0",
     fontWeight: typographyContract.fontWeight,
     opacity: 0.72,
   },

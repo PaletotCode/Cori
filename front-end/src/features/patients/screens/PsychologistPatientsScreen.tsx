@@ -3226,11 +3226,11 @@ export function PsychologistPatientsScreen({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: "#F4F7FB",
+    backgroundColor: "transparent",
   },
   container: {
     flexGrow: 1,
-    backgroundColor: "#F4F7FB",
+    backgroundColor: "transparent",
     paddingBottom: 160,
   },
   containerDetail: {

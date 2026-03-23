@@ -1057,6 +1057,6 @@ const styles = StyleSheet.create({
   },
   container: {
     paddingTop: 10,
-    backgroundColor: "#F4F6FA",
+    backgroundColor: "transparent",
   },
 });

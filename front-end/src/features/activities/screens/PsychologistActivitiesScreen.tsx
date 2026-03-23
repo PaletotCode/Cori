@@ -24,7 +24,7 @@ export function PsychologistActivitiesScreen() {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: "#EEF2F6",
+    backgroundColor: "transparent",
     paddingHorizontal: 14,
     paddingTop: 12,
     paddingBottom: 10,

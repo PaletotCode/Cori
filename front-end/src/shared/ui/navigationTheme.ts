@@ -3,9 +3,9 @@ import { StyleSheet, type ViewStyle } from "react-native";
 import { typographyContract } from "./typography";
 
 export const appColors = {
-  background: "#F4F7FB",
-  surface: "#FFFFFF",
-  border: "#DCE6F2",
+  background: "transparent",
+  surface: "rgba(255, 255, 255, 0.9)",
+  border: "rgba(255, 255, 255, 0.24)",
   text: "#0F172A",
   textMuted: "#64748B",
   primary: "#0F766E",
@@ -35,28 +35,29 @@ export function createBottomTabBarStyle(safeAreaBottom: number): ViewStyle {
     paddingTop: 6,
     paddingBottom: safeBottomPadding,
     paddingHorizontal: 8,
-    backgroundColor: appColors.surface,
+    backgroundColor: "transparent",
     // Regra 8: separação clara do conteúdo com borda/sombra superior suave.
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(15, 23, 42, 0.14)",
+    borderTopColor: "rgba(255, 255, 255, 0.2)",
     shadowColor: "#0F172A",
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.2,
     shadowOffset: { width: 0, height: -2 },
-    shadowRadius: 10,
+    shadowRadius: 18,
     elevation: 8,
   };
 }
 
 export const navigationTheme = StyleSheet.create({
   sceneContainer: {
-    backgroundColor: appColors.background,
+    backgroundColor: "transparent",
   },
   header: {
-    backgroundColor: appColors.surface,
+    backgroundColor: "transparent",
     height: 98,
+    borderBottomWidth: 0,
   },
   headerTitle: {
-    color: appColors.text,
+    color: "#F8FAFC",
     fontSize: 19,
     fontWeight: typographyContract.fontWeight,
     fontFamily: typographyContract.fontFamily,

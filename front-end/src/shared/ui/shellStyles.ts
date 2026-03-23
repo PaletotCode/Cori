@@ -3,14 +3,14 @@ import { StyleSheet } from "react-native";
 export const shellStyles = StyleSheet.create({
   scrollContainer: {
     flexGrow: 1,
-    backgroundColor: "#F4F7FB",
+    backgroundColor: "transparent",
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 160,
   },
   viewContainer: {
     flex: 1,
-    backgroundColor: "#F4F7FB",
+    backgroundColor: "transparent",
     paddingHorizontal: 16,
     paddingTop: 14,
     paddingBottom: 24,

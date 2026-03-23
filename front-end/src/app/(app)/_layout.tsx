@@ -1,5 +1,5 @@
 import { Redirect, Tabs } from "expo-router";
-import { StyleSheet } from "react-native";
+import { Image, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuthStore } from "../../features/auth/hooks/useAuthStore";
@@ -15,6 +15,8 @@ import {
   createBottomTabBarStyle,
   navigationTheme,
 } from "../../shared/ui/navigationTheme";
+
+const psychologistWallpaper = require("../../assets/wallpapers/psychologist-wallpaper.png");
 
 export default function ProtectedLayout() {
   const insets = useSafeAreaInsets();
@@ -35,25 +37,36 @@ export default function ProtectedLayout() {
   }
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: true,
-        headerTitleAlign: "left",
-        lazy: false,
-        headerStyle: navigationTheme.header,
-        headerTitleStyle: navigationTheme.headerTitle,
-        headerRightContainerStyle: styles.headerRightContainer,
-        headerShadowVisible: false,
-        tabBarStyle: createBottomTabBarStyle(insets.bottom),
-        tabBarItemStyle: [navigationTheme.tabBarItem, styles.tabItem],
-        // Regra 5: paleta neutra + uma unica cor de destaque da marca (sem cor por aba).
-        tabBarActiveTintColor: appColors.primary,
-        tabBarInactiveTintColor: appColors.textMuted,
-        tabBarHideOnKeyboard: true,
-        // Regra 9: feedback imediato de toque com ripple + scale sutil.
-        tabBarButton: (props) => <BottomTabButton {...props} />,
-      }}
-    >
+    <View style={styles.layoutRoot}>
+      <Image
+        source={psychologistWallpaper}
+        resizeMode="cover"
+        style={styles.wallpaper}
+      />
+      <View style={styles.wallpaperOverlay} pointerEvents="none" />
+
+      <Tabs
+        screenOptions={{
+          headerShown: true,
+          headerTitleAlign: "left",
+          lazy: false,
+          sceneStyle: navigationTheme.sceneContainer,
+          headerStyle: navigationTheme.header,
+          headerTitleStyle: navigationTheme.headerTitle,
+          headerRightContainerStyle: styles.headerRightContainer,
+          headerShadowVisible: false,
+          headerBackground: () => <View style={styles.glassHeaderBackground} />,
+          tabBarBackground: () => <View style={styles.glassTabBarBackground} />,
+          tabBarStyle: createBottomTabBarStyle(insets.bottom),
+          tabBarItemStyle: [navigationTheme.tabBarItem, styles.tabItem],
+          // Regra 5: paleta neutra + uma unica cor de destaque da marca (sem cor por aba).
+          tabBarActiveTintColor: appColors.primary,
+          tabBarInactiveTintColor: appColors.textMuted,
+          tabBarHideOnKeyboard: true,
+          // Regra 9: feedback imediato de toque com ripple + scale sutil.
+          tabBarButton: (props) => <BottomTabButton {...props} />,
+        }}
+      >
       {/* Regra 1: 5 abas principais (entre 3 e 5). Rotas auxiliares ficam fora da barra com href:null. */}
       <Tabs.Screen
         name="psicologo/sessao"
@@ -156,11 +169,40 @@ export default function ProtectedLayout() {
           tabBarStyle: styles.hiddenTabBar,
         }}
       />
-    </Tabs>
+      </Tabs>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  layoutRoot: {
+    flex: 1,
+    backgroundColor: "#0B1522",
+  },
+  wallpaper: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  wallpaperOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(8, 18, 28, 0.28)",
+  },
+  glassHeaderBackground: {
+    flex: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.10)",
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(255, 255, 255, 0.20)",
+    shadowColor: "#0F172A",
+    shadowOpacity: 0.28,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+  glassTabBarBackground: {
+    flex: 1,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 255, 255, 0.22)",
+    backgroundColor: "rgba(255, 255, 255, 0.10)",
+  },
   tabItem: {
     flex: 1,
     minWidth: 0,
